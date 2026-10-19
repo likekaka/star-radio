@@ -426,6 +426,26 @@ function cnPlace(s) {
   for (const [zh, alias, la, lo] of CN_SORTED) if (nm.includes(zh)) return [la, lo];
   return null;
 }
+/* 国家 bbox(粗界,+2° 余量):目录里国家标错/坐标乱填的,校验不过按无坐标处理 */
+const CC_BBOX = {
+  US:[24,50,-170,-64], CA:[42,84,-141,-52], MX:[14,33,-118,-86], BR:[-34,6,-74,-34],
+  AR:[-56,-21,-74,-53], CN:[18,54,73,135], JP:[30,46,128,146], KR:[33,39,126,130],
+  IN:[6,36,68,98], RU:[41,82,19,180], ID:[-11,7,94,142], AU:[-44,-10,112,155],
+  NZ:[-48,-34,166,179], DE:[47,55,6,15], FR:[41,51,-5,10], GB:[49,59,-8,2],
+  IT:[36,47,7,19], ES:[36,44,-10,4], PT:[36,43,-10,-6], NL:[50,54,3,7],
+  BE:[50,52,2,6], CH:[45,48,6,11], AT:[46,50,9,17], PL:[49,55,14,24],
+  SE:[55,69,11,24], NO:[58,72,4,32], FI:[59,71,20,32], DK:[54,58,8,13],
+  IE:[51,56,-10,-6], GR:[35,42,19,29], TR:[36,42,26,45], UA:[44,53,22,41],
+  CZ:[48,51,12,19], RO:[43,48,20,30], HU:[45,49,16,23], BG:[41,45,22,29],
+  ZA:[-35,-22,16,33], EG:[22,32,24,37], NG:[4,14,2,15], KE:[-5,6,33,42],
+  TH:[5,21,97,106], VN:[8,24,102,110], PH:[5,19,116,127], MY:[1,7,99,120],
+  TW:[21,26,119,123], HK:[22,23,113,115], MO:[22,23,113,114],
+};
+function geoPlausible(cc, lat, lon) {
+  const b = CC_BBOX[cc];
+  if (!b) return true;                        // 没表的国家不校验
+  return lat >= b[0] - 2 && lat <= b[1] + 2 && lon >= b[2] - 2 && lon <= b[3] + 2;
+}
 function placeLatLon(s, byCC) {               // 无坐标台的安放
   const cn = CN_AREA.has(s.countrycode) ? cnPlace(s) : null;
   if (cn) return [cn[0] + Math.random() - 0.5, cn[1] + Math.random() - 0.5];
@@ -488,7 +508,8 @@ async function loadStations() {
   stations = [];
   for (const s of list) {
     const ok = isFinite(+s.geo_lat) && isFinite(+s.geo_long)
-            && !(+s.geo_lat === 0 && +s.geo_long === 0);   // (0,0)=未标注
+            && !(+s.geo_lat === 0 && +s.geo_long === 0)    // (0,0)=未标注
+            && geoPlausible(s.countrycode, +s.geo_lat, +s.geo_long);  // 错标过滤
     if (ok) {
       stations.push(mkT(s));
       (byCC[s.countrycode] ||= []).push([+s.geo_lat, +s.geo_long]);
