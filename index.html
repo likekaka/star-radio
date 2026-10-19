@@ -414,8 +414,8 @@ const CN_GEO = [
   ['佛山',   [], 23.0, 113.1], ['东莞', [], 23.0, 113.7],
   ['汕头',   [], 23.4, 116.7], ['拉萨', ['lhasa'], 29.7, 91.1],
   ['杭州',   ['hangchow'], 30.3, 120.2], ['武汉', ['hankow','wuhan'], 30.6, 114.3],
-  ['西安',   ['sian'], 34.3, 108.9], ['成都', ['chengtu'], 30.6, 104.1],
-  ['广州',   ['canton'], 23.1, 113.3], ['南京', ['nanking'], 32.1, 118.8],
+  ['西安',   ['sian'], 34.3, 108.9], ['成都',   ['chengtu'], 30.6, 104.1],
+  ['广州',   ['canton'], 23.1, 113.3], ['南京',   ['nanking'], 32.1, 118.8],
 ];
 const CN_SORTED = [...CN_GEO].sort((a, b) => b[0].length - a[0].length);
 const CN_AREA = new Set(['CN', 'TW', 'HK', 'MO']);
@@ -558,10 +558,31 @@ function buildPool(list) {                    // 原始数组 → 电台池(真�
   buildCountryOptions();
   armStandby();
 }
-async function loadStations() {
+function altFiltered() {                       // 快照按当前筛选客户端过滤 + 抽样
+  let list = rdPool.filter(t =>
+    (!fLang.value || t.rdLang === fLang.value) &&
+    (!fCountry.value || t.countrycode === fCountry.value) &&
+    (!fGenre.value || t.tags.toLowerCase().includes(fGenre.value)) &&
+    (!(+fBitrate.value) || t.bitrate >= +fBitrate.value));
+  if (list.length > 2000)                      // 无筛选时抽样,别把 3 万台灌进 buffer
+    list = list.filter(() => Math.random() < 2000 / list.length);
+  return list;
+}
+async function loadStations() {                // 三级:缓存 → 快照秒开 → API 后台换新
   const q = apiURL();
-  const c = cacheGet(CACHE.pool, 7 * 864e5);  // 先用缓存秒开(SWR)
-  if (c && c.q === q) buildPool(c.s);
+  const c = cacheGet(CACHE.pool, 7 * 864e5);
+  if (c && c.q === q) {
+    buildPool(c.s);                            // 一档:7 天内本地缓存
+  } else {
+    try {                                      // 二档:仓库快照,首次访问也秒开
+      await loadRoamdial();
+      buildPool(altFiltered());
+      fromAlt = true;
+    } catch { await refreshFromAPI(q, c); return; }   // 快照也没有:只能等 API
+  }
+  refreshFromAPI(q, c).catch(() => {});        // 三档:后台拉新热替换,不挡播放
+}
+async function refreshFromAPI(q, c) {
   try {
     const list = (await rbFetch(q))
       .filter(s => s.url_resolved && s.url_resolved.startsWith('https'));   // 混合内容拦截
@@ -570,19 +591,11 @@ async function loadStations() {
     try { localStorage.setItem(CACHE.pool,
       JSON.stringify({ q, t: Date.now(), s: list.slice(0, 1500).map(slimApi) })); } catch {}
   } catch (e) {
-    const c2 = cacheGet(CACHE.pool, 7 * 864e5);
-    if (c2 && c2.q === q && stations.length) { fromCache = true; return; }   // 有缓存:吃旧数据
-    try {                                       // 无缓存:备用源快照
-      let list = (await loadRoamdial()).filter(t =>
-        (!fLang.value || t.rdLang === fLang.value) &&
-        (!fCountry.value || t.countrycode === fCountry.value) &&
-        (!fGenre.value || t.tags.toLowerCase().includes(fGenre.value)) &&
-        (!(+fBitrate.value) || t.bitrate >= +fBitrate.value));
-      if (list.length > 2000)                  // 无筛选时抽样,别把 3 万台灌进 buffer
-        list = list.filter(() => Math.random() < 2000 / list.length);
-      buildPool(list);
-      fromAlt = true;
-    } catch { throw e; }                       // 备用源也挂才是真失败
+    if (stations.length) {                     // 已有秒开数据:标来源,不报错
+      if (c && c.q === q) fromCache = true;
+      return;
+    }
+    throw e;                                   // 真的一无所获
   }
 }
 function mkT(s, forced) {
@@ -1000,8 +1013,11 @@ loadLanguages().catch(() => {});
     nameEl.textContent = '电台目录加载失败'; metaEl.textContent = 'Radio Browser 镜像暂不可用,稍后刷新';
   });
   const shareUUID = new URLSearchParams(location.search).get('s');
-  const t = shareUUID && await stationByUUID(shareUUID)
-         || await stationByUUID(lsGet(LS.last, ''))
+  const lastUUID = lsGet(LS.last, '');
+  const localFind = u => u && stations.find(t => t.s.stationuuid === u);   // 快照台(rd-*)本地即中
+  const t = localFind(shareUUID) || localFind(lastUUID)
+         || (shareUUID ? await stationByUUID(shareUUID) : null)
+         || (lastUUID ? await stationByUUID(lastUUID) : null)
          || null;
   if (t) playStation(t); else next();
 })();
