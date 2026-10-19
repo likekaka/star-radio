@@ -495,6 +495,23 @@ const LANG2CODE = { chinese:'zh', english:'en', german:'de', spanish:'es', frenc
   khmer:'km', lao:'lo', burmese:'my', tibetan:'bo', uyghur:'ug' };
 const langZh = new Intl.DisplayNames(['zh'], { type:'language' });
 const zhLang = n => (LANG2CODE[n] && langZh.of(LANG2CODE[n])) || n;
+/* 备用源:仓库内置 fallback.json(由 make_fallback.py 从 Radio Browser 生态快照生成,
+   已滤 HLS/死链、坐标含散布)。仅在镜像全挂且缓存为空时启用 */
+let rdPool = null;
+const zh2enLang = () => {                     // 中文语言名 → Radio Browser 英文名(筛选用)
+  const m = {};
+  for (const en of Object.keys(LANG2CODE)) m[zhLang(en)] = en;
+  return m;
+};
+async function loadRoamdial() {
+  if (rdPool) return rdPool;
+  const rows = await fetch('./fallback.json', { signal: AbortSignal.timeout?.(15000) }).then(r => r.json());
+  const zh2en = zh2enLang();
+  rdPool = rows.map(r => ({ stationuuid: 'rd-' + r[0], name: r[1], url_resolved: r[2],
+    country: r[3], countrycode: r[4], state: r[5], bitrate: r[6], tags: r[7],
+    geo_lat: r[8], geo_long: r[9], rdLang: zh2en[r[10]] || '', rdPrec: r[11] }));
+  return rdPool;
+}
 async function loadLanguages() {
   let langs;
   try {
@@ -548,19 +565,30 @@ async function loadStations() {
   try {
     const list = (await rbFetch(q))
       .filter(s => s.url_resolved && s.url_resolved.startsWith('https'));   // 混合内容拦截
-    fromCache = false;
+    fromCache = false; fromAlt = false;
     buildPool(list);
     try { localStorage.setItem(CACHE.pool,
       JSON.stringify({ q, t: Date.now(), s: list.slice(0, 1500).map(slimApi) })); } catch {}
   } catch (e) {
-    if (!stations.length) throw e;            // 没缓存也没网才算失败
-    fromCache = true;                          // 接口挂了,吃旧数据
+    const c2 = cacheGet(CACHE.pool, 7 * 864e5);
+    if (c2 && c2.q === q && stations.length) { fromCache = true; return; }   // 有缓存:吃旧数据
+    try {                                       // 无缓存:备用源快照
+      let list = (await loadRoamdial()).filter(t =>
+        (!fLang.value || t.rdLang === fLang.value) &&
+        (!fCountry.value || t.countrycode === fCountry.value) &&
+        (!fGenre.value || t.tags.toLowerCase().includes(fGenre.value)) &&
+        (!(+fBitrate.value) || t.bitrate >= +fBitrate.value));
+      if (list.length > 2000)                  // 无筛选时抽样,别把 3 万台灌进 buffer
+        list = list.filter(() => Math.random() < 2000 / list.length);
+      buildPool(list);
+      fromAlt = true;
+    } catch { throw e; }                       // 备用源也挂才是真失败
   }
 }
 function mkT(s, forced) {
   const [lat, lon] = forced || [+s.geo_lat, +s.geo_long];
   return { s, gpos: ll2v(lat, lon, 2.005), npos: nebulaPos(genreIdx(s.tags)),
-           approx: !!forced };               // forced=散布坐标,时区只敢标"约"
+           approx: !!forced || s.rdPrec >= 3 };  // forced/快照 prec≥3 = 散布坐标,时区标"约"
 }
 async function stationByUUID(uuid) {
   try {
@@ -617,7 +645,7 @@ function toggleLike() {
 }
 
 /* ============ 播放 ============ */
-let current = null, flyQ = null, fromCache = false;
+let current = null, flyQ = null, fromCache = false, fromAlt = false;
 const likeBtn = $('likeBtn');
 const _lv = new THREE.Vector3();
 function ll2lon(v) {                          // 球面坐标 → 经度(散布台用落点算时区)
@@ -631,7 +659,7 @@ function localTime(lon) {                     // ponytail: 经度估算时区(±
 function describe(t) {
   const s = t.s;
   nameEl.textContent = s.name;
-  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地${t.approx ? '约 ' : ' '}${localTime((t.approx ? ll2lon(t.gpos) : s.geo_long) || 0)}${fromCache ? ' · 离线缓存' : ''}`;
+  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地${t.approx ? '约 ' : ' '}${localTime((t.approx ? ll2lon(t.gpos) : s.geo_long) || 0)}${fromCache ? ' · 离线缓存' : ''}${fromAlt ? ' · 备用源' : ''}`;
   document.title = `${s.name} - 星海电台`;
   likeBtn.textContent = getLikes().some(x => x.stationuuid === s.stationuuid) ? '♥' : '♡';
   likeBtn.classList.toggle('on', likeBtn.textContent === '♥');
@@ -977,7 +1005,7 @@ loadLanguages().catch(() => {});
          || null;
   if (t) playStation(t); else next();
 })();
-window.__dbg = { get stations() { return stations.length; }, setView, enterDive, next, loadStations };
+window.__dbg = { get stations() { return stations.length; }, setView, enterDive, next, loadStations, loadRoamdial };
 </script>
 </body>
 </html>
