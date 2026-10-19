@@ -496,15 +496,30 @@ const LANG2CODE = { chinese:'zh', english:'en', german:'de', spanish:'es', frenc
 const langZh = new Intl.DisplayNames(['zh'], { type:'language' });
 const zhLang = n => (LANG2CODE[n] && langZh.of(LANG2CODE[n])) || n;
 async function loadLanguages() {
-  const langs = (await rbFetch('/json/languages'))
-    .filter(l => l.stationcount >= 20)
-    .sort((a, b) => b.stationcount - a.stationcount).slice(0, 40);
+  let langs;
+  try {
+    langs = (await rbFetch('/json/languages'))
+      .filter(l => l.stationcount >= 20)
+      .sort((a, b) => b.stationcount - a.stationcount).slice(0, 40);
+    try { localStorage.setItem(CACHE.langs, JSON.stringify({ t: Date.now(), l: langs })); } catch {}
+  } catch {
+    const c = cacheGet(CACHE.langs, Infinity);   // 接口挂 → 用缓存,不限龄
+    if (!c) return;
+    langs = c.l;
+  }
   fLang.add(new Option('语言 全部', ''));
   for (const l of langs) fLang.add(new Option(`${zhLang(l.name)} ${l.stationcount}`, l.name));
 }
-async function loadStations() {
-  const list = (await rbFetch(apiURL()))
-    .filter(s => s.url_resolved && s.url_resolved.startsWith('https'));   // 混合内容拦截
+const CACHE = { pool:'rdx_pool', langs:'rdx_langs' };   // ponytail: 单槽缓存,只存最近一次查询;多查询分槽等真需要再加
+const cacheGet = (k, maxAge) => {
+  try { const c = JSON.parse(localStorage.getItem(k));
+        if (c && Date.now() - c.t < maxAge) return c; } catch {}
+  return null;
+};
+const slimApi = s => ({ stationuuid:s.stationuuid, name:s.name, url_resolved:s.url_resolved,
+  country:s.country, countrycode:s.countrycode, state:s.state, bitrate:s.bitrate,
+  tags:s.tags, geo_lat:s.geo_lat, geo_long:s.geo_long });
+function buildPool(list) {                    // 原始数组 → 电台池(真坐标 + 散布)
   const byCC = {};
   stations = [];
   for (const s of list) {
@@ -525,6 +540,22 @@ async function loadStations() {
   fillDots();
   buildCountryOptions();
   armStandby();
+}
+async function loadStations() {
+  const q = apiURL();
+  const c = cacheGet(CACHE.pool, 7 * 864e5);  // 先用缓存秒开(SWR)
+  if (c && c.q === q) buildPool(c.s);
+  try {
+    const list = (await rbFetch(q))
+      .filter(s => s.url_resolved && s.url_resolved.startsWith('https'));   // 混合内容拦截
+    fromCache = false;
+    buildPool(list);
+    try { localStorage.setItem(CACHE.pool,
+      JSON.stringify({ q, t: Date.now(), s: list.slice(0, 1500).map(slimApi) })); } catch {}
+  } catch (e) {
+    if (!stations.length) throw e;            // 没缓存也没网才算失败
+    fromCache = true;                          // 接口挂了,吃旧数据
+  }
 }
 function mkT(s, forced) {
   const [lat, lon] = forced || [+s.geo_lat, +s.geo_long];
@@ -586,7 +617,7 @@ function toggleLike() {
 }
 
 /* ============ 播放 ============ */
-let current = null, flyQ = null;
+let current = null, flyQ = null, fromCache = false;
 const likeBtn = $('likeBtn');
 const _lv = new THREE.Vector3();
 function ll2lon(v) {                          // 球面坐标 → 经度(散布台用落点算时区)
@@ -600,7 +631,7 @@ function localTime(lon) {                     // ponytail: 经度估算时区(±
 function describe(t) {
   const s = t.s;
   nameEl.textContent = s.name;
-  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地${t.approx ? '约 ' : ' '}${localTime((t.approx ? ll2lon(t.gpos) : s.geo_long) || 0)}`;
+  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地${t.approx ? '约 ' : ' '}${localTime((t.approx ? ll2lon(t.gpos) : s.geo_long) || 0)}${fromCache ? ' · 离线缓存' : ''}`;
   document.title = `${s.name} - 星海电台`;
   likeBtn.textContent = getLikes().some(x => x.stationuuid === s.stationuuid) ? '♥' : '♡';
   likeBtn.classList.toggle('on', likeBtn.textContent === '♥');
@@ -946,7 +977,7 @@ loadLanguages().catch(() => {});
          || null;
   if (t) playStation(t); else next();
 })();
-window.__dbg = { get stations() { return stations.length; }, setView, enterDive, next };
+window.__dbg = { get stations() { return stations.length; }, setView, enterDive, next, loadStations };
 </script>
 </body>
 </html>
