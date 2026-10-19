@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#04060d">
+<title>星海电台</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root { --fg:#dde7f2; --dim:#8ba0b8; --line:#35536e; --bg:#0d1522 }
+  html,body { margin:0; height:100dvh; overflow:hidden; background:#04060d;
+              color:var(--fg); font-family:system-ui,sans-serif; overscroll-behavior:none }
+  #c { position:fixed; inset:0; display:block; cursor:grab; touch-action:none }
+  button { font-family:inherit }
+
+  /* 顶栏 */
+  #top { position:fixed; top:0; left:0; right:0; display:flex; align-items:center;
+         gap:8px; padding:10px 12px; z-index:3; pointer-events:none }
+  #brand { font-weight:700; letter-spacing:.15em; font-size:.95rem; color:#cfe0f0;
+           text-shadow:0 0 10px #0006 }
+  #top .sp { flex:1 }
+  #top button, #panelBtn { pointer-events:auto; background:#0d1522cc; color:var(--fg);
+         border:1px solid var(--line); border-radius:9px; padding:.42em .7em;
+         font-size:.85rem; cursor:pointer }
+  #top button:hover { background:#182438dd }
+
+  /* 筛选 */
+  #filters { position:fixed; top:52px; left:50%; transform:translateX(-50%);
+             display:flex; gap:6px; z-index:2; flex-wrap:wrap; justify-content:center; max-width:96vw }
+  #filters select { background:#0d1522cc; color:#cde; border:1px solid var(--line);
+                    border-radius:8px; padding:.32em .5em; font-size:.85rem; cursor:pointer; max-width:30vw }
+
+  /* 底部播放卡 */
+  #ui { position:fixed; left:0; right:0; bottom:calc(env(safe-area-inset-bottom,0px) + 9vh);
+        text-align:center; pointer-events:none; z-index:2 }
+  #name { font-size:1.35rem; margin:.15em 0; text-shadow:0 0 12px #000 }
+  #meta { color:var(--dim); min-height:1.5em; font-size:.9rem }
+  #acts { pointer-events:auto; display:flex; gap:7px; justify-content:center; margin-top:.6em }
+  .btn { font-size:1.05rem; padding:.45em .95em; cursor:pointer; border-radius:11px;
+         border:1px solid var(--line); background:#0d1522cc; color:var(--fg) }
+  .btn.pri { font-size:1.35rem; padding:.45em 1.5em }
+  .btn:hover { background:#182438dd }
+  .btn.on { color:#ffb37a; border-color:#7a5535 }
+  #sleepTag { color:#ffb37a; font-size:.8rem; min-height:1.2em; margin-top:.4em }
+
+  /* 侧面板:历史/收藏/睡眠 */
+  #panel { position:fixed; top:0; right:0; bottom:0; width:min(340px,88vw); z-index:5;
+           background:#070d18f2; border-left:1px solid var(--line); padding:16px;
+           overflow-y:auto; transform:translateX(105%); transition:transform .25s }
+  #panel.open { transform:none }
+  #panel h3 { margin:.6em 0 .35em; font-size:.85rem; color:var(--dim); font-weight:600 }
+  #panel .chips { display:flex; flex-wrap:wrap; gap:6px }
+  #panel .chips button { background:#0d1522; color:#bcd; border:1px solid #2b4258;
+           border-radius:99px; padding:.28em .75em; font-size:.8rem; cursor:pointer; max-width:100%;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  #panel .chips button:hover { background:#182438 }
+  #panel .row { display:flex; gap:6px; align-items:center; margin:.4em 0; font-size:.85rem }
+  #panel .row .sp { flex:1 }
+  .sw { position:relative; width:34px; height:19px; border-radius:99px; border:1px solid var(--line);
+        background:#0d1522; cursor:pointer; flex:0 0 auto }
+  .sw::after { content:''; position:absolute; top:2px; left:2px; width:13px; height:13px;
+               border-radius:50%; background:#8ba0b8; transition:.15s }
+  .sw.on { background:#2a4a68 } .sw.on::after { left:17px; background:#ffb37a }
+  #panelClose { position:absolute; top:10px; right:10px; background:none; border:none;
+                color:var(--dim); font-size:1.1rem; cursor:pointer }
+  .empty { color:#57708c; font-size:.8rem }
+
+  /* 搜索 */
+  #search { position:fixed; inset:0; z-index:6; background:#04060dcc; display:none;
+            padding-top:12vh; backdrop-filter:blur(3px) }
+  #search.open { display:block }
+  #searchBox { width:min(560px,92vw); margin:0 auto; background:#0b1424;
+               border:1px solid var(--line); border-radius:14px; overflow:hidden }
+  #searchInput { width:100%; box-sizing:border-box; background:none; border:none;
+                 outline:none; color:var(--fg); font-size:1.05rem; padding:.9em 1em }
+  #searchList { max-height:52vh; overflow-y:auto }
+  #searchList button { display:block; width:100%; text-align:left; background:none;
+       border:none; border-top:1px solid #16283c; color:var(--fg); padding:.6em 1em;
+       cursor:pointer; font-size:.92rem }
+  #searchList button:hover { background:#14213a }
+  #searchList .s { color:var(--dim); font-size:.78rem }
+
+  /* 快捷键提示 */
+  #hints { position:fixed; right:10px; bottom:calc(env(safe-area-inset-bottom,0px) + 10px);
+           z-index:1; color:#44608a; font-size:.72rem; line-height:1.7; text-align:right;
+           user-select:none; pointer-events:none }
+  #hints b { color:#6e8db8; font-weight:600 }
+
+  #credit { position:fixed; left:0; right:0; bottom:calc(env(safe-area-inset-bottom,0px) + 2px);
+            text-align:center; z-index:0 }
+  #credit a { color:#3d5573; font-size:.68rem; text-decoration:none }
+  #credit a:hover { color:#57708c }
+
+  /* 手机 */
+  @media (max-width:600px) {
+    #brand { font-size:.8rem }
+    #top { padding:8px }
+    #top button { padding:.4em .55em; font-size:.78rem }
+    #filters { top:48px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding:0 8px }
+    #filters select { max-width:44vw; flex:0 0 auto }
+    #ui { bottom:calc(env(safe-area-inset-bottom,0px) + 12vh) }
+    #name { font-size:1.05rem; display:-webkit-box; -webkit-line-clamp:2;
+            -webkit-box-orient:vertical; overflow:hidden; max-width:92vw; margin-inline:auto }
+    #acts { flex-wrap:wrap; gap:6px }
+    .btn { padding:.42em .8em; font-size:.95rem; min-height:40px }
+    .btn.pri { font-size:1.1rem; padding:.42em 1.2em; flex:1 1 auto; max-width:72vw }
+    #sleepTag { font-size:.72rem }
+    #hints { display:none }
+    #panel { width:min(320px,92vw) }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js",
+    "topojson-client": "https://esm.sh/topojson-client@3"
+} }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="top">
+  <span id="brand">星海电台</span>
+  <span class="sp"></span>
+  <button id="viewBtn" title="切换视图 (V)">🌐 地球</button>
+  <button id="panelBtn" title="收藏 / 历史 / 睡眠">☰</button>
+</div>
+
+<div id="filters">
+  <select id="fGenre">
+    <option value="">流派 全部</option>
+    <option value="pop">流行</option><option value="rock">摇滚</option>
+    <option value="dance">电子</option><option value="jazz">爵士</option>
+    <option value="classical">古典</option><option value="news">新闻谈话</option>
+    <option value="hip hop">嘻哈</option><option value="country">乡村</option>
+    <option value="folk">民谣</option>
+  </select>
+  <select id="fLang"></select>
+  <select id="fCountry"><option value="">国家 全部</option></select>
+  <select id="fBitrate">
+    <option value="0">码率 全部</option>
+    <option value="128">≥128k</option>
+    <option value="192">≥192k</option>
+    <option value="320">≥320k</option>
+  </select>
+</div>
+
+<div id="ui">
+  <h2 id="name">Loading…</h2>
+  <p id="meta"></p>
+  <div id="acts">
+    <button class="btn" id="likeBtn" title="收藏 (F)">♡</button>
+    <button class="btn" id="ppBtn" title="播放/暂停 (空格)">⏸</button>
+    <button class="btn pri" id="nextBtn">下一站</button>
+    <button class="btn" id="shBtn" title="复制分享链接">🔗</button>
+    <button class="btn" id="searchBtn" title="搜索 (/)">🔍</button>
+  </div>
+  <p id="sleepTag"></p>
+</div>
+
+<div id="panel">
+  <button id="panelClose">✕</button>
+  <h3>收藏</h3>
+  <div class="row">只听收藏<span class="sp"></span><div class="sw" id="onlySavedSw"></div></div>
+  <div class="chips" id="likeChips"></div>
+  <p class="empty" id="likeEmpty">还没有收藏。喜欢的台点 ♡ 或按 F。</p>
+  <h3>历史</h3>
+  <div class="chips" id="histChips"></div>
+  <p class="empty" id="histEmpty">还没有听过。</p>
+  <h3>睡眠定时</h3>
+  <div class="row" id="sleepRow"></div>
+</div>
+
+<div id="search">
+  <div id="searchBox">
+    <input id="searchInput" placeholder="搜电台、城市或国家…" autocomplete="off">
+    <div id="searchList"></div>
+  </div>
+</div>
+
+<div id="hints">
+  <b>/</b> 搜索 · <b>空格</b> 播停 · <b>N</b> 下一站<br>
+  <b>F</b> 收藏 · <b>V</b> 换视图 · <b>D</b> 唱片 · <b>Esc</b> 关闭
+</div>
+
+<p id="credit"><a href="https://www.radio-browser.info" target="_blank" rel="noopener">电台目录 Radio Browser</a></p>
+
+<script type="module">
+import * as THREE from 'three';
+import { feature } from 'topojson-client';
+
+const RB_HOSTS = ['de1', 'de2', 'all'];        // 镜像链,超时 12s 换下一个
+async function rbFetch(path) {
+  let err = null;
+  for (const h of RB_HOSTS) {
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const r = await fetch(`https://${h}.api.radio-browser.info${path}`, { signal:ctrl.signal });
+      clearTimeout(tm);
+      if (r.ok) return r.json();
+      err = Error(`HTTP ${r.status} @${h}`);
+    } catch (e) { clearTimeout(tm); err = e; }
+  }
+  throw err;
+}
+const $ = id => document.getElementById(id);
+const nameEl = $('name'), metaEl = $('meta');
+const player = new Audio();
+const aux = new Audio(); aux.preload = 'auto';   // 预缓冲下一台
+
+/* ============ 流派(星云簇/着色) ============ */
+const GENRES = [
+  { tag:'pop',        zh:'流行',  c:0xff7a90 },
+  { tag:'rock',       zh:'摇滚',  c:0xff9a5a },
+  { tag:'dance',      zh:'电子',  c:0x7ad0ff },
+  { tag:'jazz',       zh:'爵士',  c:0xffd07a },
+  { tag:'classical',  zh:'古典',  c:0xc09aff },
+  { tag:'news',       zh:'新闻',  c:0x9ab8a0 },
+  { tag:'hip hop',    zh:'嘻哈',  c:0x8affc0 },
+  { tag:'country',    zh:'乡村',  c:0xd0a06a },
+  { tag:'folk',       zh:'民谣',  c:0xa0d8a0 },
+  { tag:'religious',  zh:'宗教',  c:0xffffff },
+];
+function genreIdx(tags) {
+  const t = (tags || '').toLowerCase();
+  for (let i = 0; i < GENRES.length; i++) if (t.includes(GENRES[i].tag)) return i;
+  if (/talk|news|资讯|新闻/.test(t)) return 5;
+  return -1;                                  // 综合未分类
+}
+const genreColor = i => i < 0 ? 0x8899aa : GENRES[i].c;
+
+/* ============ three 基础 ============ */
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300);
+camera.position.set(0, 0, 6);
+const globe = new THREE.Group();               // 地球视图容器
+const nebula = new THREE.Group();              // 星云视图容器
+scene.add(globe, nebula);
+nebula.visible = false;
+
+const dotTex = (() => {                        // 圆点贴图
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0, '#fff'); g.addColorStop(0.5, '#fffa'); g.addColorStop(1, '#fff0');
+  x.fillStyle = g; x.beginPath(); x.arc(16, 16, 16, 0, 7); x.fill();
+  return new THREE.CanvasTexture(c);
+})();
+
+{ /* 背景星点 */
+  const n = 2000, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(40 + Math.random() * 60);
+    pos.set([v.x, v.y, v.z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+    color:0x8fa8c8, size:0.09, sizeAttenuation:true, map:dotTex,
+    transparent:true, opacity:0.75, depthWrite:false })));
+}
+
+/* --- 地球 --- */
+function ll2v(lat, lon, r) {
+  const phi = (90 - lat) * Math.PI / 180, th = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(-r * Math.sin(phi) * Math.cos(th),
+                            r * Math.cos(phi),
+                            r * Math.sin(phi) * Math.sin(th));
+}
+globe.add(new THREE.Mesh(new THREE.SphereGeometry(1.99, 48, 32),
+                         new THREE.MeshBasicMaterial({ color:0x060a12 })));
+{ /* 经纬网格 */
+  const mat = new THREE.LineBasicMaterial({ color:0x1c3a5e, transparent:true, opacity:0.85 });
+  const seg = 96;
+  const ring = pts => globe.add(new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(pts), mat));
+  for (let lat = -75; lat <= 75; lat += 15)
+    ring(Array.from({length:seg}, (_, i) => ll2v(lat, i / seg * 360 - 180, 2)));
+  for (let lon = -180; lon < 180; lon += 15)
+    ring(Array.from({length:seg}, (_, i) => ll2v(i / seg * 180 - 90, lon, 2)));
+}
+{ /* 大陆轮廓(world-atlas 110m,双 CDN 兜底) */
+  const urls = ['https://unpkg.com/world-atlas@2.0.2/land-110m.json',
+                'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/land-110m.json'];
+  (async () => {
+    let topo = null;
+    for (const u of urls) { try { topo = await (await fetch(u)).json(); break; } catch {} }
+    if (!topo) return;
+    const land = feature(topo, topo.objects.land);
+    const mat = new THREE.LineBasicMaterial({ color:0x3f7d9e, transparent:true, opacity:0.95 });
+    const polys = land.type === 'FeatureCollection'
+      ? land.features.flatMap(f => f.geometry.coordinates) : land.geometry.coordinates;
+    for (const poly of polys) for (const ring of poly) {
+      if (ring.length < 4) continue;
+      globe.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
+        ring.map(([lon, lat]) => ll2v(lat, lon, 2))), mat));
+    }
+  })();
+}
+
+/* --- 电台点(地球 + 星云两份 buffer,同一数据) --- */
+const CAP = 5000;
+let stations = [];                             // {s, gpos(球面), npos(星云), col}
+function makePoints(group, size) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP * 3), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(CAP * 3), 3));
+  const p = new THREE.Points(geo, new THREE.PointsMaterial({
+    size, sizeAttenuation:true, map:dotTex, vertexColors:true,
+    transparent:true, opacity:0.95, depthWrite:false }));
+  group.add(p);
+  return p;
+}
+const gDots = makePoints(globe, 0.06);
+const nDots = makePoints(nebula, 0.09);
+const pulse = new THREE.Points(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 2)]),
+  new THREE.PointsMaterial({ color:0xffe3bd, size:0.16, sizeAttenuation:true, map:dotTex,
+    transparent:true, blending:THREE.AdditiveBlending, depthWrite:false }));
+globe.add(pulse);
+
+function fillDots() {
+  for (const [pts, key] of [[gDots, 'gpos'], [nDots, 'npos']]) {
+    const pa = pts.geometry.attributes.position.array;
+    const ca = pts.geometry.attributes.color.array;
+    stations.forEach((t, i) => {
+      pa.set([t[key].x, t[key].y, t[key].z], i * 3);
+      const c = new THREE.Color(genreColor(genreIdx(t.s.tags)));
+      ca.set([c.r, c.g, c.b], i * 3);
+    });
+    pts.geometry.setDrawRange(0, stations.length);
+    pts.geometry.attributes.position.needsUpdate = true;
+    pts.geometry.attributes.color.needsUpdate = true;
+    pts.geometry.boundingSphere = null;
+  }
+}
+
+/* 星云位置:11 个簇心斐波那契球分布,簇内高斯散布 */
+function nebulaPos(i) {
+  const N = 11, k = i < 0 ? N - 1 : i;         // 未分类放第 11 簇
+  const ga = k * Math.PI * (3 - Math.sqrt(5));
+  const y = 1 - 2 * (k + 0.5) / N;
+  const ctr = new THREE.Vector3(Math.cos(ga) * Math.sqrt(1 - y * y), y, Math.sin(ga) * Math.sqrt(1 - y * y))
+    .multiplyScalar(3.2);
+  const a = Math.random() * Math.PI * 2, r = Math.abs((Math.random() + Math.random() + Math.random()) / 3) * 0.85;
+  return ctr.add(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * r, Math.sin(a) * r));
+}
+{ /* 星云簇心微光 */
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(11 * 3), col = new Float32Array(11 * 3);
+  for (let k = 0; k < 11; k++) {
+    const ga = k * Math.PI * (3 - Math.sqrt(5));
+    const y = 1 - 2 * (k + 0.5) / 11;
+    const v = new THREE.Vector3(Math.cos(ga) * Math.sqrt(1 - y * y), y, Math.sin(ga) * Math.sqrt(1 - y * y)).multiplyScalar(3.2);
+    pos.set([v.x, v.y, v.z], k * 3);
+    const c = new THREE.Color(genreColor(k - 1)).multiplyScalar(0.5);
+    col.set([c.r, c.g, c.b], k * 3);
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  nebula.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    size:1.1, sizeAttenuation:true, map:dotTex, vertexColors:true,
+    transparent:true, opacity:0.16, blending:THREE.AdditiveBlending, depthWrite:false })));
+}
+
+/* ============ 中国省份归位 + 国家散布 ============ */
+const CN_GEO = [
+  ['黑龙江', ['heilungkiang','heilongjiang'], 45.8, 126.6],
+  ['内蒙古', ['inner mongolia','neimenggu'],   40.8, 111.7],
+  ['浙江',   ['chekiang','zhejiang'],          30.3, 120.2],
+  ['吉林',   ['kirin','jilin'],                43.9, 125.3],
+  ['辽宁',   ['liaoning','fengtien'],          41.8, 123.4],
+  ['江苏',   ['kiangsu','jiangsu'],            32.1, 118.8],
+  ['安徽',   ['anhwei','anhui'],               31.8, 117.3],
+  ['山东',   ['shantung','shandong'],          36.7, 117.0],
+  ['山西',   ['shansi','shanxi'],              37.9, 112.5],
+  ['河北',   ['hopei','hebei'],                38.0, 114.5],
+  ['河南',   ['honan','henan'],                34.7, 113.6],
+  ['湖北',   ['hupei','hubei'],                30.6, 114.3],
+  ['湖南',   ['hunan'],                        28.2, 112.9],
+  ['江西',   ['kiangsi','jiangxi'],            28.7, 115.9],
+  ['福建',   ['fukien','fujian'],              26.1, 119.3],
+  ['广东',   ['kwangtung','guangdong','canton'], 23.1, 113.3],
+  ['广西',   ['kwangsi','guangxi'],            22.8, 108.3],
+  ['海南',   ['hainan'],                       20.0, 110.3],
+  ['贵州',   ['kweichow','guizhou'],           26.6, 106.6],
+  ['云南',   ['yunnan'],                       25.0, 102.7],
+  ['四川',   ['szechuan','sichuan'],           30.6, 104.1],
+  ['陕西',   ['shensi','shaanxi'],             34.3, 108.9],
+  ['甘肃',   ['kansu','gansu'],                36.1, 103.8],
+  ['青海',   ['chinghai','qinghai'],           36.6, 101.8],
+  ['宁夏',   ['ningsia','ningxia'],            38.5, 106.3],
+  ['新疆',   ['sinkiang','xinjiang'],          43.8,  87.6],
+  ['西藏',   ['tibet','thibet','xizang'],      29.7,  91.1],
+  ['重庆',   ['chungking','chongqing'],        29.6, 106.5],
+  ['北京',   ['beijing','peking'],             39.9, 116.4],
+  ['上海',   ['shanghai'],                     31.2, 121.5],
+  ['天津',   ['tientsin','tianjin'],           39.1, 117.2],
+  ['台湾',   ['taiwan','formosa','taipei'],    25.0, 121.6],
+  ['香港',   ['hongkong','hong kong'],         22.3, 114.2],
+  ['澳门',   ['macau','macao'],                22.2, 113.5],
+  ['哈尔滨', ['harbin'], 45.8, 126.6], ['大连', ['dalian'], 39.0, 121.6],
+  ['青岛',   ['tsingtao'], 36.1, 120.4], ['深圳', ['shenzhen'], 22.5, 114.1],
+  ['苏州',   ['soochow'], 31.3, 120.6], ['厦门', ['amoy'], 24.5, 118.1],
+  ['宁波',   ['ningpo'], 29.9, 121.6], ['温州', ['wenchow'], 28.0, 120.7],
+  ['佛山',   [], 23.0, 113.1], ['东莞', [], 23.0, 113.7],
+  ['汕头',   [], 23.4, 116.7], ['拉萨', ['lhasa'], 29.7, 91.1],
+  ['杭州',   ['hangchow'], 30.3, 120.2], ['武汉', ['hankow','wuhan'], 30.6, 114.3],
+  ['西安',   ['sian'], 34.3, 108.9], ['成都', ['chengtu'], 30.6, 104.1],
+  ['广州',   ['canton'], 23.1, 113.3], ['南京', ['nanking'], 32.1, 118.8],
+];
+const CN_SORTED = [...CN_GEO].sort((a, b) => b[0].length - a[0].length);
+const CN_AREA = new Set(['CN', 'TW', 'HK', 'MO']);
+function cnPlace(s) {
+  const st = (s.state || '').toLowerCase().trim();
+  if (st) for (const [zh, alias, la, lo] of CN_GEO)
+    if (alias.includes(st) || zh === st) return [la, lo];
+  const nm = s.name || '';
+  for (const [zh, alias, la, lo] of CN_SORTED) if (nm.includes(zh)) return [la, lo];
+  return null;
+}
+function placeLatLon(s, byCC) {               // 无坐标台的安放
+  const cn = CN_AREA.has(s.countrycode) ? cnPlace(s) : null;
+  if (cn) return [cn[0] + Math.random() - 0.5, cn[1] + Math.random() - 0.5];
+  const arr = byCC[s.countrycode];
+  if (arr) {
+    const [rl, ro] = arr[(Math.random() * arr.length) | 0];
+    return [rl + Math.random() * 5 - 2.5, ro + Math.random() * 5 - 2.5];
+  }
+  return null;
+}
+
+/* ============ 数据池 ============ */
+const fLang = $('fLang'), fCountry = $('fCountry'), fBitrate = $('fBitrate'), fGenre = $('fGenre');
+function apiURL() {
+  const filtered = fLang.value || fCountry.value || fGenre.value;
+  const p = new URLSearchParams({ limit: filtered ? CAP : 1000, order:'random', hidebroken:'true' });
+  if (+fBitrate.value) p.set('bitrate_min', fBitrate.value);
+  if (fLang.value) p.set('language', fLang.value);
+  if (fCountry.value) p.set('countrycode', fCountry.value);
+  if (fGenre.value) p.set('tagList', fGenre.value);
+  return '/json/stations/search?' + p;
+}
+const regionName = new Intl.DisplayNames(['zh'], { type:'region' });
+function buildCountryOptions() {
+  const counts = {};
+  for (const t of stations) counts[t.s.countrycode] = (counts[t.s.countrycode] || 0) + 1;
+  const cur = fCountry.value;
+  fCountry.length = 1;
+  for (const [cc, n] of Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 30))
+    fCountry.add(new Option(`${cc === '' ? '未知' : regionName.of(cc)} (${n})`, cc));
+  fCountry.value = cur;
+}
+/* Radio Browser 语言名是英文,映射到 BCP-47 后用 Intl.DisplayNames 出中文 */
+const LANG2CODE = { chinese:'zh', english:'en', german:'de', spanish:'es', french:'fr',
+  italian:'it', portuguese:'pt', russian:'ru', japanese:'ja', korean:'ko', arabic:'ar',
+  hindi:'hi', turkish:'tr', polish:'pl', dutch:'nl', flemish:'nl', swedish:'sv',
+  norwegian:'no', danish:'da', finnish:'fi', greek:'el', hebrew:'he', ukrainian:'uk',
+  romanian:'ro', hungarian:'hu', czech:'cs', slovak:'sk', bulgarian:'bg', serbian:'sr',
+  croatian:'hr', bosnian:'bs', slovenian:'sl', macedonian:'mk', albanian:'sq',
+  catalan:'ca', galician:'gl', basque:'eu', welsh:'cy', irish:'ga', icelandic:'is',
+  thai:'th', vietnamese:'vi', indonesian:'id', malay:'ms', tagalog:'fil', filipino:'fil',
+  persian:'fa', urdu:'ur', bengali:'bn', tamil:'ta', telugu:'te', marathi:'mr',
+  punjabi:'pa', gujarati:'gu', kannada:'kn', malayalam:'ml', swahili:'sw',
+  afrikaans:'af', amharic:'am', hausa:'ha', yoruba:'yo', georgian:'ka', armenian:'hy',
+  azerbaijani:'az', kazakh:'kk', uzbek:'uz', mongolian:'mn', nepali:'ne', sinhala:'si',
+  khmer:'km', lao:'lo', burmese:'my', tibetan:'bo', uyghur:'ug' };
+const langZh = new Intl.DisplayNames(['zh'], { type:'language' });
+const zhLang = n => (LANG2CODE[n] && langZh.of(LANG2CODE[n])) || n;
+async function loadLanguages() {
+  const langs = (await rbFetch('/json/languages'))
+    .filter(l => l.stationcount >= 20)
+    .sort((a, b) => b.stationcount - a.stationcount).slice(0, 40);
+  fLang.add(new Option('语言 全部', ''));
+  for (const l of langs) fLang.add(new Option(`${zhLang(l.name)} ${l.stationcount}`, l.name));
+}
+async function loadStations() {
+  const list = (await rbFetch(apiURL()))
+    .filter(s => s.url_resolved && s.url_resolved.startsWith('https'));   // 混合内容拦截
+  const byCC = {};
+  stations = [];
+  for (const s of list) {
+    const ok = isFinite(+s.geo_lat) && isFinite(+s.geo_long)
+            && !(+s.geo_lat === 0 && +s.geo_long === 0);   // (0,0)=未标注
+    if (ok) {
+      stations.push(mkT(s));
+      (byCC[s.countrycode] ||= []).push([+s.geo_lat, +s.geo_long]);
+    }
+  }
+  for (const s of list) {
+    if (stations.length >= CAP) break;
+    const p = placeLatLon(s, byCC);
+    if (!p) continue;
+    stations.push(mkT(s, p));
+  }
+  fillDots();
+  buildCountryOptions();
+  armStandby();
+}
+function mkT(s, forced) {
+  const [lat, lon] = forced || [+s.geo_lat, +s.geo_long];
+  return { s, gpos: ll2v(lat, lon, 2.005), npos: nebulaPos(genreIdx(s.tags)) };
+}
+async function stationByUUID(uuid) {
+  try {
+    const arr = await rbFetch(`/json/stations/byuuid/${uuid}`);
+    const s = arr.find(x => x.url_resolved && x.url_resolved.startsWith('https'));
+    if (!s) return null;
+    const t = mkT(s, placeLatLon(s, {}) || undefined);
+    stations.push(t); fillDots();
+    return t;
+  } catch { return null; }
+}
+
+/* ============ 收藏 / 历史 / 只听收藏 ============ */
+const LS = { likes:'rdx_likes', hist:'rdx_hist', last:'rdx_last', vol:'rdx_vol', only:'rdx_only' };
+const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const lsSet = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const slim = t => { const s = t.s; return { stationuuid:s.stationuuid, name:s.name,
+  url_resolved:s.url_resolved, country:s.country, countrycode:s.countrycode, bitrate:s.bitrate,
+  tags:s.tags, state:s.state, geo_lat:s.geo_lat, geo_long:s.geo_long }; };
+let onlySaved = lsGet(LS.only, false);
+const getLikes = () => lsGet(LS.likes, []);
+function renderPanel() {
+  const likes = getLikes(), hist = lsGet(LS.hist, []);
+  const mkChips = (el, emptyEl, arr, rm) => {
+    el.innerHTML = '';
+    arr.forEach((s, i) => {
+      const b = document.createElement('button');
+      b.textContent = s.name;
+      b.onclick = () => playStation(mkT(s, placeLatLon(s, {}) || [+s.geo_lat, +s.geo_long]));
+      if (rm) b.oncontextmenu = e => { e.preventDefault();
+        lsSet(LS.likes, getLikes().filter(x => x.stationuuid !== s.stationuuid)); renderPanel(); };
+      el.appendChild(b);
+    });
+    emptyEl.style.display = arr.length ? 'none' : 'block';
+  };
+  mkChips($('likeChips'), $('likeEmpty'), likes, true);
+  mkChips($('histChips'), $('histEmpty'), hist, false);
+  $('onlySavedSw').classList.toggle('on', onlySaved);
+}
+function pushHist(t) {
+  const h = lsGet(LS.hist, []).filter(x => x.stationuuid !== t.s.stationuuid);
+  lsSet(LS.hist, [slim(t), ...h].slice(0, 30));
+  renderPanel();
+}
+function toggleLike() {
+  if (!current) return;
+  const likes = getLikes(), id = current.s.stationuuid;
+  const on = !likes.some(x => x.stationuuid === id);
+  lsSet(LS.likes, on ? [slim(current), ...likes.filter(x => x.stationuuid !== id)].slice(0, 50)
+                     : likes.filter(x => x.stationuuid !== id));
+  likeBtn.textContent = on ? '♥' : '♡';
+  likeBtn.classList.toggle('on', on);
+  renderPanel();
+}
+
+/* ============ 播放 ============ */
+let current = null, flyQ = null;
+const likeBtn = $('likeBtn');
+function localTime(lon) {                     // ponytail: 经度估算时区(±30 分钟误差),精确需 GeoNames 后端
+  const off = Math.round((lon || 0) / 15);
+  return new Date(Date.now() + off * 36e5).toISOString().slice(11, 16);
+}
+function describe(t) {
+  const s = t.s;
+  nameEl.textContent = s.name;
+  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地 ${localTime(s.geo_long || 0)}`;
+  document.title = `${s.name} - 星海电台`;
+  likeBtn.textContent = getLikes().some(x => x.stationuuid === s.stationuuid) ? '♥' : '♡';
+  likeBtn.classList.toggle('on', likeBtn.textContent === '♥');
+  lsSet(LS.last, s.stationuuid);
+  player.volume = lsGet(LS.vol, {})[s.stationuuid] ?? 1;
+}
+function playStation(t) {
+  current = t;
+  if (!stations.some(x => x.s.stationuuid === t.s.stationuuid)) { stations.push(t); fillDots(); }
+  describe(t); pushHist(t); fxStatic();
+  pulse.geometry.setFromPoints([t.gpos]);
+  if (!view)                                  // 地球视图:飞到该台
+    flyQ = new THREE.Quaternion().setFromUnitVectors(
+      t.gpos.clone().normalize(), new THREE.Vector3(0, 0, 1));
+  player.src = t.s.url_resolved;              // 浏览器直连电台流
+  player.play().catch(() => {});
+  armStandby();
+}
+let standby = null;
+const pool = () => onlySaved
+  ? getLikes().map(s => mkT(s, placeLatLon(s, {}) || [+s.geo_lat, +s.geo_long]))
+  : stations;
+function armStandby() {
+  const p = pool();
+  if (!p.length) return;
+  standby = p[(Math.random() * p.length) | 0];
+  aux.src = standby.s.url_resolved; aux.load();
+}
+function next() {
+  const p = pool();
+  if (!p.length) { nameEl.textContent = onlySaved ? '收藏是空的' : '没有可用电台'; return; }
+  playStation(standby && p.includes(standby) ? standby : p[(Math.random() * p.length) | 0]);
+}
+player.onerror = next;                        // 死链自动跳
+player.addEventListener('play', () => $('ppBtn').textContent = '⏸');
+player.addEventListener('pause', () => $('ppBtn').textContent = '▶');
+
+/* ============ 调台杂音(独立 AudioContext,不碰播放链路) ============ */
+let fxCtx = null;
+function fxStatic() {
+  try {
+    fxCtx ||= new AudioContext();
+    if (fxCtx.state === 'suspended') fxCtx.resume();
+    const len = 0.18 * fxCtx.sampleRate;
+    const buf = fxCtx.createBuffer(1, len, fxCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+    const src = fxCtx.createBufferSource(); src.buffer = buf;
+    const bp = fxCtx.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 1600 + Math.random() * 800; bp.Q.value = 0.6;
+    const g = fxCtx.createGain(); g.gain.value = 0.12;
+    src.connect(bp).connect(g).connect(fxCtx.destination);
+    src.start();
+  } catch {}
+}
+
+/* ============ 睡眠定时 ============ */
+let sleepAt = 0, sleepTick = 0;
+const SLEEPS = [0, 15, 30, 60];
+function setSleep(min) {
+  sleepAt = min ? Date.now() + min * 6e4 : 0;
+  renderSleep();
+}
+function renderSleep() {
+  const row = $('sleepRow');
+  row.innerHTML = '';
+  SLEEPS.forEach(m => {
+    const b = document.createElement('button');
+    b.className = 'btn'; b.style.fontSize = '.8rem';
+    b.textContent = m ? `${m} 分` : '关';
+    b.onclick = () => setSleep(m);
+    row.appendChild(b);
+  });
+  const left = sleepAt ? Math.max(1, Math.ceil((sleepAt - Date.now()) / 6e4)) : 0;
+  $('sleepTag').textContent = left ? `睡眠 ${left} 分钟后暂停` : '';
+}
+sleepTick = setInterval(() => {
+  if (sleepAt) {
+    if (Date.now() >= sleepAt) { player.pause(); setSleep(0); }
+    else renderSleep();
+  }
+}, 30000);
+
+/* ============ 搜索 ============ */
+const searchEl = $('search'), searchInput = $('searchInput'), searchList = $('searchList');
+function openSearch() { searchEl.classList.add('open'); searchInput.value = ''; runSearch(); searchInput.focus(); }
+function closeSearch() { searchEl.classList.remove('open'); }
+function runSearch() {
+  const q = searchInput.value.trim().toLowerCase();
+  const p = pool();
+  const hits = (q ? p.filter(t =>
+    (t.s.name + ' ' + (t.s.country || '') + ' ' + (t.s.state || '') + ' ' + (t.s.tags || ''))
+    .toLowerCase().includes(q)) : p).slice(0, 40);
+  searchList.innerHTML = '';
+  hits.forEach(t => {
+    const b = document.createElement('button');
+    b.innerHTML = `${t.s.name}<br><span class="s">${t.s.country || ''} · ${(t.s.tags || '').split(',')[0] || ''}</span>`;
+    b.onclick = () => { closeSearch(); playStation(t); };
+    searchList.appendChild(b);
+  });
+  if (!hits.length) searchList.innerHTML = '<button disabled><span class="s">没有找到,换个关键词</span></button>';
+}
+searchInput.addEventListener('input', runSearch);
+searchEl.addEventListener('click', e => { if (e.target === searchEl) closeSearch(); });
+
+/* ============ 视图切换:0 地球 / 1 星云 ============ */
+let view = 0;
+function setView(v) {
+  view = v;
+  globe.visible = !v; nebula.visible = !!v;
+  pulse.visible = !v;
+  $('viewBtn').textContent = v ? '🌌 星云' : '🌐 地球';
+  if (!v && current)                          // 回地球视图:飞回当前台
+    flyQ = new THREE.Quaternion().setFromUnitVectors(
+      current.gpos.clone().normalize(), new THREE.Vector3(0, 0, 1));
+}
+
+/* ============ 唱片视图(闲置进入,螺旋/山脉/星球三形态轮换) ============ */
+let dive = null;                              // {group, mode}
+function enterDive() {
+  if (dive) return;
+  const mode = ((diveMode++) % 3);
+  const g = new THREE.Group();
+  const n = Math.min(stations.length, 1500);
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const t = stations[i];
+    let x, y, z;
+    if (mode === 0) {                         // 螺旋唱片
+      const a = i * 0.11, r = 0.4 + i * 0.0035;
+      x = Math.cos(a) * r; z = Math.sin(a) * r; y = (Math.random() - 0.5) * 0.08;
+    } else if (mode === 1) {                  // 山脉
+      const row = Math.floor(i / 60), colI = i % 60;
+      x = (colI - 30) * 0.14; z = -row * 0.14;
+      y = Math.abs(Math.sin(colI * 0.6 + row)) * (0.3 + Math.random() * 0.5);
+    } else {                                  // 星球环
+      const a = i * 0.5, r = 2.2 + (i / n) * 1.8 + Math.sin(i * 0.05) * 0.3;
+      x = Math.cos(a) * r; z = Math.sin(a) * r;
+      y = Math.sin(a * 2.3) * 0.5;
+    }
+    pos.set([x, y, z], i * 3);
+    const c = new THREE.Color(genreColor(genreIdx(t.s.tags)));
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    size:0.05, sizeAttenuation:true, map:dotTex, vertexColors:true,
+    transparent:true, opacity:0.9, depthWrite:false })));
+  g.position.z = -3;
+  scene.add(g);
+  globe.visible = nebula.visible = pulse.visible = false;
+  dive = { group: g, mode };
+}
+let diveMode = 0;
+function exitDive() {
+  if (!dive) return;
+  scene.remove(dive.group);
+  dive = null;
+  setView(view);                              // 恢复原视图
+}
+
+/* ============ 交互:拖拽/缩放/点击 ============ */
+const drag = { on:false, x:0, y:0, moved:0 };
+const vel = { x:0, y:0 };
+const ptrs = new Map();
+let pinchD = 0, camDist = 6;
+const clampCam = () => { camDist = Math.min(16, Math.max(3, camDist)); };
+const _q = new THREE.Quaternion();
+function rotateBy(dx, dy) {
+  const k = 0.004 * camDist / 6;
+  const grp = view ? nebula : globe;
+  if (view) {                                 // 星云只绕 Y
+    _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx);
+    grp.quaternion.premultiply(_q);
+    return;
+  }
+  _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx);
+  grp.quaternion.premultiply(_q);
+  _q.setFromAxisAngle(new THREE.Vector3(1, 0, 0), dy);
+  grp.quaternion.premultiply(_q);
+}
+canvas.addEventListener('wheel', e => {
+  e.preventDefault(); wake();
+  camDist *= 1 + e.deltaY * 0.0012; clampCam();
+}, { passive:false });
+canvas.addEventListener('pointerdown', e => {
+  wake();
+  ptrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  if (ptrs.size === 2) {
+    drag.on = false; vel.x = vel.y = 0;
+    const [a, b] = [...ptrs.values()];
+    pinchD = Math.hypot(a.x - b.x, a.y - b.y);
+  } else {
+    drag.on = true; drag.moved = 0; drag.x = e.clientX; drag.y = e.clientY;
+    vel.x = vel.y = 0; flyQ = null;
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  if (ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchD > 0 && d > 0) { camDist *= pinchD / d; clampCam(); }
+    pinchD = d;
+    return;
+  }
+  if (!drag.on) { hoverAt(e); return; }
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  vel.x = dx * 0.004; vel.y = dy * 0.004;
+  rotateBy(dx * 0.004, dy * 0.004);
+});
+addEventListener('pointerup', e => {
+  ptrs.delete(e.pointerId);
+  if (ptrs.size < 2) pinchD = 0;
+  if (!drag.on) return;
+  drag.on = false;
+  if (drag.moved < 8) pick(e);
+});
+addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); pinchD = 0; drag.on = false; });
+
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 0.07;
+function frontCheck(t) {
+  return view ? true : t.gpos.clone().applyQuaternion(globe.quaternion).z > 0.1;
+}
+function pick(e) {
+  if (dive) { exitDive(); return; }
+  const m = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(m, camera);
+  const pts = view ? nDots : gDots;
+  for (const h of raycaster.intersectObject(pts)) {
+    const t = stations[h.index];
+    if (t && frontCheck(t)) { playStation(t); return; }
+  }
+}
+function hoverAt(e) {
+  if (dive) return;
+  const m = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(m, camera);
+  canvas.style.cursor = raycaster.intersectObject(view ? nDots : gDots).length ? 'pointer' : 'grab';
+}
+
+/* ============ 闲置:30s 唱片视图 ============ */
+let lastAct = performance.now();
+function wake() {
+  lastAct = performance.now();
+  if (dive) exitDive();
+}
+
+/* ============ 渲染循环 ============ */
+let raf = 0, lastT = performance.now(), idleAt = performance.now();
+function frame(t) {
+  raf = requestAnimationFrame(frame);
+  const dt = Math.min((t - lastT) / 1000, 0.1); lastT = t;
+  if (t - lastAct > 30000 && !dive && stations.length) enterDive();
+  if (dive) {
+    dive.group.rotation.y += dt * 0.15;
+    if (dive.mode === 1) dive.group.position.y = Math.sin(t / 4000) * 0.15;
+  } else if (flyQ) {
+    globe.quaternion.slerp(flyQ, 1 - Math.pow(0.002, dt));
+    if (globe.quaternion.angleTo(flyQ) < 0.01) { flyQ = null; idleAt = t; }
+  } else if (!drag.on) {
+    if (Math.abs(vel.x) + Math.abs(vel.y) > 1e-4) {
+      rotateBy(vel.x, vel.y);
+      const k = Math.pow(0.05, dt); vel.x *= k; vel.y *= k;
+    } else if (t - idleAt > 3000)
+      rotateBy(dt * 0.05, 0);
+  }
+  pulse.material.size = 0.13 + 0.05 * Math.sin(t / 180);
+  camera.position.z = camDist;
+  renderer.render(scene, camera);
+}
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+  else { lastT = performance.now(); raf = requestAnimationFrame(frame); }
+});
+resize(); raf = requestAnimationFrame(frame);
+
+/* ============ UI 接线 ============ */
+$('nextBtn').onclick = () => { wake(); next(); };
+$('ppBtn').onclick = () => { wake(); player.paused ? player.play().catch(() => {}) : player.pause(); };
+likeBtn.onclick = () => { wake(); toggleLike(); };
+$('shBtn').onclick = () => {
+  if (!current) return;
+  const url = location.origin + location.pathname + '?s=' + current.s.stationuuid;
+  navigator.clipboard?.writeText(url).catch?.(() => {});
+  $('shBtn').textContent = '✓'; setTimeout(() => $('shBtn').textContent = '🔗', 1200);
+};
+$('searchBtn').onclick = openSearch;
+$('viewBtn').onclick = () => { wake(); setView(view ? 0 : 1); };
+$('panelBtn').onclick = () => { $('panel').classList.add('open'); renderPanel(); renderSleep(); };
+$('panelClose').onclick = () => $('panel').classList.remove('open');
+$('onlySavedSw').onclick = () => {
+  onlySaved = !onlySaved; lsSet(LS.only, onlySaved);
+  renderPanel(); armStandby();
+};
+for (const sel of [fGenre, fLang, fCountry, fBitrate])
+  sel.addEventListener('change', async () => {
+    nameEl.textContent = 'Loading…'; metaEl.textContent = '';
+    await loadStations().catch(() => {});
+    next();
+  });
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') { if (e.key === 'Escape') closeSearch(); return; }
+  const k = e.key.toLowerCase();
+  if (k === '/') { e.preventDefault(); openSearch(); }
+  else if (k === ' ') { e.preventDefault(); wake(); $('ppBtn').onclick(); }
+  else if (k === 'n') { wake(); next(); }
+  else if (k === 'f') { wake(); toggleLike(); }
+  else if (k === 'v') { wake(); setView(view ? 0 : 1); }
+  else if (k === 'd') { wake(); dive ? exitDive() : enterDive(); }
+  else if (e.key === 'Escape') { closeSearch(); $('panel').classList.remove('open'); }
+});
+addEventListener('pointerdown', () => { fxStatic(); player.play().catch(() => {}); }, { once:true });
+
+/* ============ 启动:分享 > 上次 > 随机 ============ */
+renderPanel(); renderSleep();
+loadLanguages().catch(() => {});
+(async () => {
+  await loadStations().catch(() => {
+    nameEl.textContent = '电台目录加载失败'; metaEl.textContent = 'Radio Browser 镜像暂不可用,稍后刷新';
+  });
+  const shareUUID = new URLSearchParams(location.search).get('s');
+  const t = shareUUID && await stationByUUID(shareUUID)
+         || await stationByUUID(lsGet(LS.last, ''))
+         || null;
+  if (t) playStation(t); else next();
+})();
+window.__dbg = { get stations() { return stations.length; }, setView, enterDive, next };
+</script>
+</body>
+</html>

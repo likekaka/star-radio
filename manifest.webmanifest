@@ -1,0 +1,9 @@
+{
+  "name": "星海电台",
+  "short_name": "星海电台",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#04060d",
+  "theme_color": "#004060d",
+  "description": "随机收听世界电台"
+}
