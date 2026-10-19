@@ -326,14 +326,15 @@ const pulse = new THREE.Points(
     transparent:true, blending:THREE.AdditiveBlending, depthWrite:false }));
 globe.add(pulse);
 
+const _c = new THREE.Color();
 function fillDots() {
   for (const [pts, key] of [[gDots, 'gpos'], [nDots, 'npos']]) {
     const pa = pts.geometry.attributes.position.array;
     const ca = pts.geometry.attributes.color.array;
     stations.forEach((t, i) => {
       pa.set([t[key].x, t[key].y, t[key].z], i * 3);
-      const c = new THREE.Color(genreColor(genreIdx(t.s.tags)));
-      ca.set([c.r, c.g, c.b], i * 3);
+      _c.setHex(genreColor(genreIdx(t.s.tags)));
+      ca.set([_c.r, _c.g, _c.b], i * 3);
     });
     pts.geometry.setDrawRange(0, stations.length);
     pts.geometry.attributes.position.needsUpdate = true;
@@ -527,7 +528,8 @@ async function loadStations() {
 }
 function mkT(s, forced) {
   const [lat, lon] = forced || [+s.geo_lat, +s.geo_long];
-  return { s, gpos: ll2v(lat, lon, 2.005), npos: nebulaPos(genreIdx(s.tags)) };
+  return { s, gpos: ll2v(lat, lon, 2.005), npos: nebulaPos(genreIdx(s.tags)),
+           approx: !!forced };               // forced=散布坐标,时区只敢标"约"
 }
 async function stationByUUID(uuid) {
   try {
@@ -535,7 +537,7 @@ async function stationByUUID(uuid) {
     const s = arr.find(x => x.url_resolved && x.url_resolved.startsWith('https'));
     if (!s) return null;
     const t = mkT(s, placeLatLon(s, {}) || undefined);
-    stations.push(t); fillDots();
+    if (stations.length < CAP) { stations.push(t); fillDots(); }
     return t;
   } catch { return null; }
 }
@@ -586,6 +588,11 @@ function toggleLike() {
 /* ============ 播放 ============ */
 let current = null, flyQ = null;
 const likeBtn = $('likeBtn');
+const _lv = new THREE.Vector3();
+function ll2lon(v) {                          // 球面坐标 → 经度(散布台用落点算时区)
+  _lv.copy(v).normalize();
+  return Math.atan2(_lv.z, -_lv.x) * 180 / Math.PI - 180;
+}
 function localTime(lon) {                     // ponytail: 经度估算时区(±30 分钟误差),精确需 GeoNames 后端
   const off = Math.round((lon || 0) / 15);
   return new Date(Date.now() + off * 36e5).toISOString().slice(11, 16);
@@ -593,7 +600,7 @@ function localTime(lon) {                     // ponytail: 经度估算时区(±
 function describe(t) {
   const s = t.s;
   nameEl.textContent = s.name;
-  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地 ${localTime(s.geo_long || 0)}`;
+  metaEl.textContent = `${s.country || '?'} · ${s.bitrate || '?'}kbps · 当地${t.approx ? '约 ' : ' '}${localTime((t.approx ? ll2lon(t.gpos) : s.geo_long) || 0)}`;
   document.title = `${s.name} - 星海电台`;
   likeBtn.textContent = getLikes().some(x => x.stationuuid === s.stationuuid) ? '♥' : '♡';
   likeBtn.classList.toggle('on', likeBtn.textContent === '♥');
@@ -618,7 +625,7 @@ const pool = () => onlySaved
   : stations;
 function armStandby() {
   const p = pool();
-  if (!p.length) return;
+  if (!p.length || navigator.connection?.saveData) return;   // 省流量模式不预载
   standby = p[(Math.random() * p.length) | 0];
   aux.src = standby.s.url_resolved; aux.load();
 }
@@ -690,7 +697,12 @@ function runSearch() {
   searchList.innerHTML = '';
   hits.forEach(t => {
     const b = document.createElement('button');
-    b.innerHTML = `${t.s.name}<br><span class="s">${t.s.country || ''} · ${(t.s.tags || '').split(',')[0] || ''}</span>`;
+    b.textContent = t.s.name;                 // 台名是社区数据,只用 textContent
+    const sp = document.createElement('span');
+    sp.className = 's';
+    sp.textContent = `${t.s.country || ''} · ${(t.s.tags || '').split(',')[0] || ''}`;
+    b.appendChild(document.createElement('br'), sp);
+    b.appendChild(sp);
     b.onclick = () => { closeSearch(); playStation(t); };
     searchList.appendChild(b);
   });
@@ -821,8 +833,9 @@ addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); pinchD = 0; d
 
 const raycaster = new THREE.Raycaster();
 raycaster.params.Points.threshold = 0.07;
-function frontCheck(t) {
-  return view ? true : t.gpos.clone().applyQuaternion(globe.quaternion).z > 0.1;
+const _fc = new THREE.Vector3();
+function frontCheck(t) {                      // 复用向量,别在热路径 clone
+  return view ? true : _fc.copy(t.gpos).applyQuaternion(globe.quaternion).z > 0.1;
 }
 function pick(e) {
   if (dive) { exitDive(); return; }
