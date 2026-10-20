@@ -414,8 +414,8 @@ const CN_GEO = [
   ['佛山',   [], 23.0, 113.1], ['东莞', [], 23.0, 113.7],
   ['汕头',   [], 23.4, 116.7], ['拉萨', ['lhasa'], 29.7, 91.1],
   ['杭州',   ['hangchow'], 30.3, 120.2], ['武汉', ['hankow','wuhan'], 30.6, 114.3],
-  ['西安',   ['sian'], 34.3, 108.9], ['成都',   ['chengtu'], 30.6, 104.1],
-  ['广州',   ['canton'], 23.1, 113.3], ['南京',   ['nanking'], 32.1, 118.8],
+  ['西安',   ['sian'], 34.3, 108.9], ['成都', ['chengtu'], 30.6, 104.1],
+  ['广州',   ['canton'], 23.1, 113.3], ['南京', ['nanking'], 32.1, 118.8],
 ];
 const CN_SORTED = [...CN_GEO].sort((a, b) => b[0].length - a[0].length);
 const CN_AREA = new Set(['CN', 'TW', 'HK', 'MO']);
@@ -537,7 +537,7 @@ const slimApi = s => ({ stationuuid:s.stationuuid, name:s.name, url_resolved:s.u
   country:s.country, countrycode:s.countrycode, state:s.state, bitrate:s.bitrate,
   tags:s.tags, geo_lat:s.geo_lat, geo_long:s.geo_long });
 function buildPool(list) {                    // 原始数组 → 电台池(真坐标 + 散布)
-  const byCC = {};
+  const byCC = {}, placed = new Set();
   stations = [];
   for (const s of list) {
     const ok = isFinite(+s.geo_lat) && isFinite(+s.geo_long)
@@ -545,11 +545,13 @@ function buildPool(list) {                    // 原始数组 → 电台池(真�
             && geoPlausible(s.countrycode, +s.geo_lat, +s.geo_long);  // 错标过滤
     if (ok) {
       stations.push(mkT(s));
+      placed.add(s.stationuuid);
       (byCC[s.countrycode] ||= []).push([+s.geo_lat, +s.geo_long]);
     }
   }
   for (const s of list) {
     if (stations.length >= CAP) break;
+    if (placed.has(s.stationuuid)) continue;   // 已按真坐标入池,别再散布一份
     const p = placeLatLon(s, byCC);
     if (!p) continue;
     stations.push(mkT(s, p));
