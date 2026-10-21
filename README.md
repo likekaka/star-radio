@@ -27,7 +27,7 @@ python3 make_fallback.py   # 产出 fallback.json
 git add fallback.json && git commit -m 'update fallback snapshot' && git push
 ```
 
-快照数据派生自 Radio Browser 目录(经 roamdial 公开接口的服务端探测与地理编码加工),再分发清 注意署名要求。
+快照数据派生自 Radio Browser 目录(经 roamdial 公开接口的服务端探测与地理编码加工),再分发请遵守其署名要求。
 
 ## 说明
 - 电台目录:[Radio Browser](https://www.radio-browser.info)(API 条款要求署名)
