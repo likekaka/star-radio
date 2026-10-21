@@ -885,12 +885,7 @@ const clampCam = () => { camDist = Math.min(16, Math.max(3, camDist)); };
 const _q = new THREE.Quaternion();
 function rotateBy(dx, dy) {
   const k = 0.004 * camDist / 6;
-  const grp = view ? nebula : globe;
-  if (view) {                                 // 星云只绕 Y
-    _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx);
-    grp.quaternion.premultiply(_q);
-    return;
-  }
+  const grp = view ? nebula : globe;          // 星云与地球同款自由旋转(X+Y)
   _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx);
   grp.quaternion.premultiply(_q);
   _q.setFromAxisAngle(new THREE.Vector3(1, 0, 0), dy);
@@ -992,7 +987,7 @@ function frame(t) {
   camera.position.z = camDist;
   renderer.render(scene, camera);
   drawLabels(t);
-  if (dialArm && !view && !drag.on && !flyQ && t > settleAt &&   // 拨盘:转完停稳,播准星台
+  if (dialArm && !drag.on && !flyQ && t > settleAt &&   // 拨盘:转完停稳,播准星台(地球/星云通用)
       centerHit && centerHit !== current) { dialArm = false; playStation(centerHit); }
 }
 let dialArm = false, settleAt = 0;
@@ -1001,7 +996,7 @@ let dialArm = false, settleAt = 0;
 const nebSvg = $('nebLabels');
 const _pv = new THREE.Vector3();
 let lblAcc = 0, centerHit = null;               // centerHit:准星当前压中的台,转动停稳后自动播它
-const esc = s => String(s).replace(/[&<>]/g,   // 台名/国家是社区数据,插值前必须转义
+const esc = s => String(s).replace(/[&<>"]/g, // 台名/国家是社区数据,插值前必须转义("=双引号,字面量会被推送通道吃掉)
   c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 function drawLabels(t) {
   lblAcc += 1;
@@ -1021,11 +1016,14 @@ function drawLabels(t) {
       html += `<text class="big" x="${x.toFixed(0)}" y="${y.toFixed(0)}" text-anchor="middle" fill="${col}">${nm}</text>` +
               `<text class="s" x="${x.toFixed(0)}" y="${(y + 15).toFixed(0)}" text-anchor="middle">${nebCnt[e]} 台</text>`;
     });
-  } else {                                      // 地球:准星中心附近最近的正面台
-    let hit = null, best = 1.961;               // cos12°×r(2.005),视角内即认"中心压中"
+  }
+  { /* 准星中心台(两视图同公式:与视线夹角最小者,12° 内才算压中) */
+    const grp = view ? nebula : globe;
+    let hit = null, best = 0.978;               // cos12°
     for (const st of stations) {
-      const z = _fc.copy(st.gpos).applyQuaternion(globe.quaternion).z;   // 世界 z(相机在 +z)
-      if (z > best) { best = z; hit = st; }     // gpos 归一化后 z 即 cos(与+z夹角)
+      const p = _fc.copy(view ? st.npos : st.gpos).applyQuaternion(grp.quaternion);
+      const z = p.z / p.length();               // 归一化:npos 各点半径不同
+      if (z > best) { best = z; hit = st; }
     }
     centerHit = hit;
     if (hit) {
