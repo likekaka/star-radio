@@ -46,6 +46,15 @@
   .btn.on { color:#ffb37a; border-color:#7a5535 }
   #sleepTag { color:#ffb37a; font-size:.8rem; min-height:1.2em; margin-top:.4em }
 
+  /* 唱片模式条:返回/形态切换/上下台 */
+  #diveBar { position:fixed; left:50%; transform:translateX(-50%);
+             bottom:calc(env(safe-area-inset-bottom,0px) + 3vh); z-index:4;
+             display:none; gap:6px; align-items:center;
+             background:#0d1522dd; border:1px solid var(--line); border-radius:12px;
+             padding:6px 10px }
+  #diveBar.open { display:flex }
+  #diveBar .btn { font-size:.85rem; padding:.35em .7em }
+
   /* 侧面板:历史/收藏/睡眠 */
   #panel { position:fixed; top:0; right:0; bottom:0; width:min(340px,88vw); z-index:5;
            background:#070d18f2; border-left:1px solid var(--line); padding:16px;
@@ -164,8 +173,16 @@
     <button class="btn pri" id="nextBtn">下一站</button>
     <button class="btn" id="shBtn" title="复制分享链接">🔗</button>
     <button class="btn" id="searchBtn" title="搜索 (/)">🔍</button>
+    <button class="btn" id="diveBtn" title="进入唱片 (Enter)">💿</button>
   </div>
   <p id="sleepTag"></p>
+</div>
+
+<div id="diveBar">
+  <button class="btn" id="dvBack">← 返回 · Esc</button>
+  <button class="btn" id="dvPrev">‹</button><span id="dvMode" style="font-size:.8rem;color:var(--dim);min-width:4.5em;text-align:center">黑胶盘</span><button class="btn" id="dvNext">›</button>
+  <button class="btn" id="dvUp" title="上一台 (↑)">‹ 台</button>
+  <button class="btn" id="dvDown" title="下一台 (↓)">台 ›</button>
 </div>
 
 <div id="panel">
@@ -190,7 +207,7 @@
 
 <div id="hints">
   <b>/</b> 搜索 · <b>空格</b> 播停 · <b>N</b> 下一站<br>
-  <b>F</b> 收藏 · <b>V</b> 换视图 · <b>D</b> 唱片 · <b>Esc</b> 关闭
+  <b>F</b> 收藏 · <b>V</b> 换视图 · <b>↵</b> 唱片 · <b>Esc</b> 关闭
 </div>
 
 <p id="credit"><a href="https://www.radio-browser.info" target="_blank" rel="noopener">电台目录 Radio Browser</a></p>
@@ -837,27 +854,38 @@ function setView(v) {
       current.gpos.clone().normalize(), new THREE.Vector3(0, 0, 1));
 }
 
-/* ============ 唱片视图(roamdial 式:锚点邻近台在盘面排黑胶唱纹) ============ */
-let dive = null;                              // {group, pts, list, n}
+/* ============ 唱片视图(roamdial 式:进入按钮 + 多形态 + 邻近台导航) ============ */
+let dive = null;                              // {group, pts, list, mode}
+let discMode = 0;                             // 0 黑胶盘 1 频谱山脉 2 星球环
+const DISC_NAMES = ['黑胶盘', '频谱山脉', '星球环'];
 function enterDive(anchor) {
   if (dive || !anchor) return;
   const dir = anchor.gpos.clone().normalize();          // 邻域按锚点方向收
   const list = stations.filter(t => t !== anchor &&
     t.gpos.clone().normalize().dot(dir) > 0.86);
   list.unshift(anchor);
-  const top = list.slice(0, 700);             // shortcut: 700 上限与 roamdial 相同,再多盘面挤成一团
+  const top = list.slice(0, 700);             // shortcut: 700 上限与 roamdial 相同,再多挤成一团
   if (top.length < 4) return;
-  const n = new THREE.Vector3(0, 0, 1);       // 盘固定在 +z:永远正对相机居中
-  const bx = new THREE.Vector3(1, 0, 0), by = new THREE.Vector3(0, 1, 0);
-  const ctr = new THREE.Vector3(0, 0, 2.55);
-  const l = 1.25 / Math.sqrt(top.length);     // 螺旋总半径恒定,密度随台数
-  const ga = Math.PI * (3 - Math.sqrt(5));
   const pos = new Float32Array(top.length * 3), col = new Float32Array(top.length * 3);
+  const ga = Math.PI * (3 - Math.sqrt(5));
   top.forEach((t, i) => {
-    const r = l * Math.sqrt(i + .6), a = i * ga;      // 黄金角唱纹,r 随序号开方
-    pos.set([ctr.x + Math.cos(a) * r,
-             ctr.y + Math.sin(a) * r,
-             ctr.z], i * 3);
+    let x, y, z;
+    if (discMode === 0) {                     // 黑胶盘:黄金角唱纹(r 随序号开方)
+      const l = 1.25 / Math.sqrt(top.length);
+      const r = l * Math.sqrt(i + .6), a = i * ga;
+      x = Math.cos(a) * r; y = Math.sin(a) * r; z = 0;
+    } else if (discMode === 1) {              // 频谱山脉:x 均布、y=码率+波状起伏、z 分行
+      x = (i % 60 - 29.5) * 0.075;
+      z = -Math.floor(i / 60) * 0.075;
+      y = ((t.s.bitrate || 96) / 320) * 1.1 - 0.55
+        + Math.sin(i * 0.37) * 0.28 + Math.sin(i * 0.11) * 0.35
+        + Math.random() * 0.18;
+    } else {                                  // 星球环:大半径缓变螺旋
+      const a = i * 0.35, r = 0.5 + (i / top.length) * 1.9 + Math.sin(i * 0.05) * 0.25;
+      x = Math.cos(a) * r; z = Math.sin(a) * r * 0.35;
+      y = Math.sin(a * 2.3) * 0.4;
+    }
+    pos.set([x, y, z], i * 3);
     const c3 = new THREE.Color(genreColor(genreIdx(t.s.tags)));
     col.set([c3.r, c3.g, c3.b], i * 3);
   });
@@ -867,18 +895,27 @@ function enterDive(anchor) {
   const pts = new THREE.Points(geo, new THREE.PointsMaterial({
     size:0.055, sizeAttenuation:true, map:dotTex, vertexColors:true,
     transparent:true, opacity:0.95, depthWrite:false }));
-  const g = new THREE.Group(); g.add(pts); scene.add(g);
+  const g = new THREE.Group(); g.position.z = 2.55; g.add(pts); scene.add(g);
   globe.visible = nebula.visible = pulse.visible = false;
-  camDist = 6.2;                              // fov45 下盘半径 1.25 全入画
-  dive = { group: g, pts, list: top, n };
+  camDist = 6.2;
+  dive = { group: g, pts, list: top, mode: discMode };
+  $('diveBar').classList.add('open');
+  $('dvMode').textContent = DISC_NAMES[discMode];
 }
 function exitDive() {
   if (!dive) return;
   scene.remove(dive.group);
   dive = null;
+  $('diveBar').classList.remove('open');
   setView(view);                              // 恢复原视图(距离/可见性一并还原)
 }
-function diveStep(dir) {                      // 唱片内沿唱纹换台(上下箭头)
+function cycleDisc(d) {                       // 换形态:重建唱片
+  if (!dive) return;
+  const anchor = dive.list[0];
+  discMode = (discMode + d + DISC_NAMES.length) % DISC_NAMES.length;
+  exitDive(); enterDive(anchor);
+}
+function diveStep(dir) {                      // 唱片内沿列表换台(上下箭头)
   if (!dive || !current) return;
   const i = dive.list.indexOf(current);
   const t = dive.list[(i + dir + dive.list.length) % dive.list.length];
@@ -960,7 +997,7 @@ function pick(e) {
   const pts = view ? nDots : gDots;
   for (const h of raycaster.intersectObject(pts)) {
     const t = stations[h.index];
-    if (t && frontCheck(t)) { playStation(t); enterDive(t); return; }   // 点击进唱片
+    if (t && frontCheck(t)) { playStation(t); return; }   // 点击只播,进唱片走 💿/Enter
   }
 }
 function hoverAt(e) {
@@ -982,9 +1019,11 @@ function frame(t) {
   raf = requestAnimationFrame(frame);
   const dt = Math.min((t - lastT) / 1000, 0.1); lastT = t;
   if (t - lastAct > 30000 && !dive && current) enterDive(current);
-  if (dive) {                                  // 唱片绕盘心法线缓转(roamdial 同款)
-    _q.setFromAxisAngle(dive.n, dt * 0.15);
-    dive.group.quaternion.premultiply(_q);
+  if (dive) {                                  // 盘/环绕轴缓转,山脉静观(roamdial 形态各异)
+    if (dive.mode !== 1) {
+      _q.setFromAxisAngle(_zAxis, dt * 0.15);
+      dive.group.quaternion.premultiply(_q);
+    }
   } else if (flyQ) {
     globe.quaternion.slerp(flyQ, 1 - Math.pow(0.002, dt));
     if (globe.quaternion.angleTo(flyQ) < 0.01) { flyQ = null; idleAt = t; }
@@ -1003,12 +1042,13 @@ function frame(t) {
       centerHit && centerHit !== current) { dialArm = false; playStation(centerHit); }
 }
 let dialArm = false, settleAt = 0;
+const _zAxis = new THREE.Vector3(0, 0, 1);
 
 /* ============ 标签层:星云流派名 / 地球中心追踪(20fps 足够,省 innerHTML 开销) */
 const nebSvg = $('nebLabels');
 const _pv = new THREE.Vector3();
 let lblAcc = 0, centerHit = null;               // centerHit:准星当前压中的台,转动停稳后自动播它
-const esc = s => String(s).replace(/[&<>]/g,   // 台名/国家是社区数据,插值前必须转义
+const esc = s => String(s).replace(/[&<>]/g,   // 台名/国家是社区数据,插值前必须转义(文本内容位置,&<> 足够;" 推送通道会吃)
   c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 function drawLabels(t) {
   lblAcc += 1;
@@ -1072,6 +1112,12 @@ $('shBtn').onclick = () => {
   $('shBtn').textContent = '✓'; setTimeout(() => $('shBtn').textContent = '🔗', 1200);
 };
 $('searchBtn').onclick = openSearch;
+$('diveBtn').onclick = () => { wake(); if (dive) exitDive(); else enterDive(current); };
+$('dvBack').onclick = () => { wake(); exitDive(); };
+$('dvPrev').onclick = () => cycleDisc(-1);
+$('dvNext').onclick = () => cycleDisc(1);
+$('dvUp').onclick = () => diveStep(-1);
+$('dvDown').onclick = () => diveStep(1);
 $('viewBtn').onclick = () => { wake(); setView(view ? 0 : 1); };
 $('panelBtn').onclick = () => { $('panel').classList.add('open'); renderPanel(); renderSleep(); };
 $('panelClose').onclick = () => $('panel').classList.remove('open');
@@ -1094,9 +1140,11 @@ addEventListener('keydown', e => {
   else if (k === 'n') { wake(); next(); }
   else if (k === 'f') { wake(); toggleLike(); }
   else if (k === 'v') { wake(); setView(view ? 0 : 1); }
-  else if (k === 'd') { wake(); dive ? exitDive() : enterDive(current); }
+  else if (k === 'd' || k === 'enter') { wake(); dive ? exitDive() : enterDive(current); }
   else if (e.key === 'ArrowDown') { e.preventDefault(); diveStep(1); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); diveStep(-1); }
+  else if (e.key === 'ArrowLeft' && dive) { e.preventDefault(); cycleDisc(-1); }
+  else if (e.key === 'ArrowRight' && dive) { e.preventDefault(); cycleDisc(1); }
   else if (e.key === 'Escape') { closeSearch(); $('panel').classList.remove('open'); if (dive) exitDive(); }
 });
 addEventListener('pointerdown', () => { fxStatic(); player.play().catch(() => {}); }, { once:true });
