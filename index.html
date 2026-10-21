@@ -372,7 +372,7 @@ function fillDots() {
 
 /* 星云位置(roamdial 同款):簇内黄金角螺旋盘面,y 压扁 ×0.45,高斯抖动 ±0.3r */
 function nebulaPos(gi, seed) {
-  const c = nebCtrs[gi < 0 ? nebCtrs.length - 1 : gi] || { x:0, y:0, z:0, r:.8 };
+  const c = nebCtrs[gi < 0 ? nebCtrs.length - 1 : gi];
   const k = (seed + 1) * 12.9898;               // 确定性伪随机,重转不跳变
   const rnd = f => { const x = Math.sin(k + f * 78.233) * 43758.5453; return x - Math.floor(x); };
   const g = () => (rnd(Math.floor(rnd(9) * 1e3) % 7 + 1) + rnd(3) - 1);   // 近高斯
@@ -484,7 +484,7 @@ function placeLatLon(s, byCC) {               // 无坐标台的安放
 const fLang = $('fLang'), fCountry = $('fCountry'), fBitrate = $('fBitrate'), fGenre = $('fGenre');
 function apiURL() {
   const filtered = fLang.value || fCountry.value || fGenre.value;
-  const p = new URLSearchParams({ limit: filtered ? CAP : 1000, order:'random', hidebroken:'true' });
+  const p = new URLSearchParams({ limit: CAP, order:'random', hidebroken:'true' });
   if (+fBitrate.value) p.set('bitrate_min', fBitrate.value);
   if (fLang.value) p.set('language', fLang.value);
   if (fCountry.value) p.set('countrycode', fCountry.value);
@@ -588,8 +588,8 @@ function altFiltered() {                       // 快照按当前筛选客户端
     (!fCountry.value || t.countrycode === fCountry.value) &&
     (!fGenre.value || t.tags.toLowerCase().includes(fGenre.value)) &&
     (!(+fBitrate.value) || t.bitrate >= +fBitrate.value));
-  if (list.length > 2000)                      // 无筛选时抽样,别把 3 万台灌进 buffer
-    list = list.filter(() => Math.random() < 2000 / list.length);
+  if (list.length > CAP)                       // 全量超出 buffer 上限时按比例抽样
+    list = list.filter(() => Math.random() < CAP / list.length);
   return list;
 }
 async function loadStations() {                // 三级:缓存 → 快照秒开 → API 后台换新
@@ -613,7 +613,7 @@ async function refreshFromAPI(q, c) {
     fromCache = false; fromAlt = false;
     buildPool(list);
     try { localStorage.setItem(CACHE.pool,
-      JSON.stringify({ q, t: Date.now(), s: list.slice(0, 1500).map(slimApi) })); } catch {}
+      JSON.stringify({ q, t: Date.now(), s: list.slice(0, 3000).map(slimApi) })); } catch {}
   } catch (e) {
     if (stations.length) {                     // 已有秒开数据:标来源,不报错
       if (c && c.q === q) fromCache = true;
@@ -639,7 +639,7 @@ async function stationByUUID(uuid) {
 }
 
 /* ============ 收藏 / 历史 / 只听收藏 ============ */
-const LS = { likes:'rdx_likes', hist:'rdx_hist', last:'rdx_last', vol:'rdx_vol', only:'rdx_only' };
+const LS = { likes:'rdx_likes', hist:'rdx_hist', last:'rdx_last', only:'rdx_only' };
 const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 const slim = t => { const s = t.s; return { stationuuid:s.stationuuid, name:s.name,
@@ -647,14 +647,20 @@ const slim = t => { const s = t.s; return { stationuuid:s.stationuuid, name:s.na
   tags:s.tags, state:s.state, geo_lat:s.geo_lat, geo_long:s.geo_long }; };
 let onlySaved = lsGet(LS.only, false);
 const getLikes = () => lsGet(LS.likes, []);
+const poolByCC = () => {                        // 回放台(收藏/历史)没存散布坐标,借全池真坐标安放
+  const byCC = {};
+  stations.forEach(t => { if (!t.approx)
+    (byCC[t.s.countrycode] ||= []).push([+t.s.geo_lat, +t.s.geo_long]); });
+  return byCC;
+};
 function renderPanel() {
-  const likes = getLikes(), hist = lsGet(LS.hist, []);
+  const likes = getLikes(), hist = lsGet(LS.hist, []), byCC = poolByCC();
   const mkChips = (el, emptyEl, arr, rm) => {
     el.innerHTML = '';
-    arr.forEach((s, i) => {
+    arr.forEach(s => {
       const b = document.createElement('button');
       b.textContent = s.name;
-      b.onclick = () => playStation(mkT(s, placeLatLon(s, {}) || [+s.geo_lat, +s.geo_long]));
+      b.onclick = () => playStation(mkT(s, placeLatLon(s, byCC) || [+s.geo_lat, +s.geo_long]));
       if (rm) b.oncontextmenu = e => { e.preventDefault();
         lsSet(LS.likes, getLikes().filter(x => x.stationuuid !== s.stationuuid)); renderPanel(); };
       el.appendChild(b);
@@ -701,11 +707,10 @@ function describe(t) {
   likeBtn.textContent = getLikes().some(x => x.stationuuid === s.stationuuid) ? '♥' : '♡';
   likeBtn.classList.toggle('on', likeBtn.textContent === '♥');
   lsSet(LS.last, s.stationuuid);
-  player.volume = lsGet(LS.vol, {})[s.stationuuid] ?? 1;
 }
 function playStation(t) {
   current = t;
-  if (!stations.some(x => x.s.stationuuid === t.s.stationuuid)) { stations.push(t); fillDots(); }
+  if (stations.length < CAP && !stations.some(x => x.s.stationuuid === t.s.stationuuid)) { stations.push(t); fillDots(); }
   describe(t); pushHist(t); fxStatic();
   pulse.geometry.setFromPoints([t.gpos]);
   if (!view)                                  // 地球视图:飞到该台
@@ -717,7 +722,7 @@ function playStation(t) {
 }
 let standby = null;
 const pool = () => onlySaved
-  ? getLikes().map(s => mkT(s, placeLatLon(s, {}) || [+s.geo_lat, +s.geo_long]))
+  ? getLikes().map(s => mkT(s, placeLatLon(s, poolByCC()) || [+s.geo_lat, +s.geo_long]))
   : stations;
 function armStandby() {
   const p = pool();
@@ -730,8 +735,12 @@ function next() {
   if (!p.length) { nameEl.textContent = onlySaved ? '收藏是空的' : '没有可用电台'; return; }
   playStation(standby && p.includes(standby) ? standby : p[(Math.random() * p.length) | 0]);
 }
-player.onerror = next;                        // 死链自动跳
-player.addEventListener('play', () => $('ppBtn').textContent = '⏸');
+let failN = 0;                                 // 连续死链计数,防全网失效时无限换台
+player.onerror = () => {
+  if (++failN > 10) { nameEl.textContent = '没有可用流,稍后再试'; metaEl.textContent = ''; failN = 0; return; }
+  next();
+};
+player.addEventListener('play', () => { failN = 0; $('ppBtn').textContent = '⏸'; });
 player.addEventListener('pause', () => $('ppBtn').textContent = '▶');
 
 /* ============ 调台杂音(独立 AudioContext,不碰播放链路) ============ */
@@ -754,7 +763,7 @@ function fxStatic() {
 }
 
 /* ============ 睡眠定时 ============ */
-let sleepAt = 0, sleepTick = 0;
+let sleepAt = 0;
 const SLEEPS = [0, 15, 30, 60];
 function setSleep(min) {
   sleepAt = min ? Date.now() + min * 6e4 : 0;
@@ -773,7 +782,7 @@ function renderSleep() {
   const left = sleepAt ? Math.max(1, Math.ceil((sleepAt - Date.now()) / 6e4)) : 0;
   $('sleepTag').textContent = left ? `睡眠 ${left} 分钟后暂停` : '';
 }
-sleepTick = setInterval(() => {
+setInterval(() => {
   if (sleepAt) {
     if (Date.now() >= sleepAt) { player.pause(); setSleep(0); }
     else renderSleep();
@@ -815,7 +824,8 @@ function setView(v) {
   pulse.visible = !v;
   $('viewBtn').textContent = v ? '🌌 星云' : '🌐 地球';
   if (v) camDist = Math.max(camDist, 8.5);      // 簇环半径 3.9+抖动,拉远才全入画
-  else if (current)                          // 回地球视图:飞回当前台
+  else camDist = Math.min(camDist, 6);          // 回地球:还原距离
+  if (!v && current)                            // 回地球视图:飞回当前台
     flyQ = new THREE.Quaternion().setFromUnitVectors(
       current.gpos.clone().normalize(), new THREE.Vector3(0, 0, 1));
 }
@@ -891,7 +901,7 @@ canvas.addEventListener('wheel', e => {
   camDist *= 1 + e.deltaY * 0.0012; clampCam();
 }, { passive:false });
 canvas.addEventListener('pointerdown', e => {
-  wake();
+  wake(); dialArm = false;
   ptrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
   try { canvas.setPointerCapture(e.pointerId); } catch {}
   if (ptrs.size === 2) {
@@ -925,6 +935,7 @@ addEventListener('pointerup', e => {
   if (!drag.on) return;
   drag.on = false;
   if (drag.moved < 8) pick(e);
+  else { dialArm = true; settleAt = performance.now() + 700; }   // 旋转松手:停稳后播中心台
 });
 addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); pinchD = 0; drag.on = false; });
 
@@ -981,18 +992,23 @@ function frame(t) {
   camera.position.z = camDist;
   renderer.render(scene, camera);
   drawLabels(t);
+  if (dialArm && !view && !drag.on && !flyQ && t > settleAt &&   // 拨盘:转完停稳,播准星台
+      centerHit && centerHit !== current) { dialArm = false; playStation(centerHit); }
 }
+let dialArm = false, settleAt = 0;
 
 /* ============ 标签层:星云流派名 / 地球中心追踪(20fps 足够,省 innerHTML 开销) */
 const nebSvg = $('nebLabels');
 const _pv = new THREE.Vector3();
-let lblAcc = 0;
+let lblAcc = 0, centerHit = null;               // centerHit:准星当前压中的台,转动停稳后自动播它
+const esc = s => String(s).replace(/[&<>]/g,   // 台名/国家是社区数据,插值前必须转义
+  c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 function drawLabels(t) {
   lblAcc += 1;
   if (lblAcc < 3) return;                       // 每 3 帧一刷(≈20fps)
   lblAcc = 0;
   let html = '';
-  if (dive || !stations.length) { nebSvg.innerHTML = html; return; }
+  if (dive || !stations.length) { centerHit = null; nebSvg.innerHTML = html; return; }
   if (view) {                                   // 星云:簇心上方投影流派名 + 台数
     nebula.updateMatrixWorld();
     nebCtrs.forEach((c, e) => {
@@ -1007,21 +1023,21 @@ function drawLabels(t) {
     });
   } else {                                      // 地球:准星中心附近最近的正面台
     let hit = null, best = 1.961;               // cos12°×r(2.005),视角内即认"中心压中"
-    for (const t of stations) {
-      const z = _fc.copy(t.gpos).applyQuaternion(globe.quaternion).z;   // 世界 z(相机在 +z)
-      if (z > best) { best = z; hit = t; }      // gpos 归一化后 z 即 cos(与+z夹角)
+    for (const st of stations) {
+      const z = _fc.copy(st.gpos).applyQuaternion(globe.quaternion).z;   // 世界 z(相机在 +z)
+      if (z > best) { best = z; hit = st; }     // gpos 归一化后 z 即 cos(与+z夹角)
     }
+    centerHit = hit;
     if (hit) {
       const cx = innerWidth / 2, cy = innerHeight / 2;
       html += `<circle cx="${cx}" cy="${cy}" r="10" fill="none" stroke="#8ba0b8" stroke-opacity=".5"/>` +
               `<line x1="${cx + 13}" y1="${cy - 13}" x2="${cx + 26}" y2="${cy - 26}" stroke="#8ba0b8" stroke-opacity=".5"/>` +
-              `<text class="big" x="${cx + 30}" y="${cy - 28}" fill="#dde7f2">${hit.s.name.slice(0, 30)}</text>` +
-              `<text class="s" x="${cx + 30}" y="${cy - 13}">${hit.s.country || ''} · ${(hit.s.tags || '').split(',')[0] || ''}</text>`;
+              `<text class="big" x="${cx + 30}" y="${cy - 28}" fill="#dde7f2">${esc(hit.s.name.slice(0, 30))}</text>` +
+              `<text class="s" x="${cx + 30}" y="${cy - 13}">${esc(hit.s.country)} · ${esc((hit.s.tags || '').split(',')[0])}</text>`;
     }
   }
   nebSvg.innerHTML = html;
 }
-
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
@@ -1040,7 +1056,8 @@ $('ppBtn').onclick = () => { wake(); player.paused ? player.play().catch(() => {
 likeBtn.onclick = () => { wake(); toggleLike(); };
 $('shBtn').onclick = () => {
   if (!current) return;
-  const url = location.origin + location.pathname + '?s=' + current.s.stationuuid;
+  const url = (location.origin.startsWith('http') ? location.origin + location.pathname
+                                                  : location.href.split('?')[0]) + '?s=' + current.s.stationuuid;
   navigator.clipboard?.writeText(url).catch?.(() => {});
   $('shBtn').textContent = '✓'; setTimeout(() => $('shBtn').textContent = '🔗', 1200);
 };
