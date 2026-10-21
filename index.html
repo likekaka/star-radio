@@ -825,6 +825,7 @@ searchEl.addEventListener('click', e => { if (e.target === searchEl) closeSearch
 /* ============ 视图切换:0 地球 / 1 星云 ============ */
 let view = 0;
 function setView(v) {
+  if (dive) { scene.remove(dive.group); dive = null; }   // 唱片让位视图切换
   view = v;
   globe.visible = !v; nebula.visible = !!v;
   pulse.visible = !v;
@@ -836,50 +837,52 @@ function setView(v) {
       current.gpos.clone().normalize(), new THREE.Vector3(0, 0, 1));
 }
 
-/* ============ 唱片视图(闲置进入,螺旋/山脉/星球三形态轮换) ============ */
-let dive = null;                              // {group, mode}
-function enterDive() {
-  if (dive) return;
-  const mode = ((diveMode++) % 3);
-  const g = new THREE.Group();
-  const n = Math.min(stations.length, 1500);
-  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const t = stations[i];
-    let x, y, z;
-    if (mode === 0) {                         // 螺旋唱片
-      const a = i * 0.11, r = 0.4 + i * 0.0035;
-      x = Math.cos(a) * r; z = Math.sin(a) * r; y = (Math.random() - 0.5) * 0.08;
-    } else if (mode === 1) {                  // 山脉
-      const row = Math.floor(i / 60), colI = i % 60;
-      x = (colI - 30) * 0.14; z = -row * 0.14;
-      y = Math.abs(Math.sin(colI * 0.6 + row)) * (0.3 + Math.random() * 0.5);
-    } else {                                  // 星球环
-      const a = i * 0.5, r = 2.2 + (i / n) * 1.8 + Math.sin(i * 0.05) * 0.3;
-      x = Math.cos(a) * r; z = Math.sin(a) * r;
-      y = Math.sin(a * 2.3) * 0.5;
-    }
-    pos.set([x, y, z], i * 3);
-    const c = new THREE.Color(genreColor(genreIdx(t.s.tags)));
-    col.set([c.r, c.g, c.b], i * 3);
-  }
+/* ============ 唱片视图(roamdial 式:锚点邻近台在盘面排黑胶唱纹) ============ */
+let dive = null;                              // {group, pts, list, n}
+function enterDive(anchor) {
+  if (dive || !anchor) return;
+  const dir = anchor.gpos.clone().normalize();          // 邻域按锚点方向收
+  const list = stations.filter(t => t !== anchor &&
+    t.gpos.clone().normalize().dot(dir) > 0.86);
+  list.unshift(anchor);
+  const top = list.slice(0, 700);             // shortcut: 700 上限与 roamdial 相同,再多盘面挤成一团
+  if (top.length < 4) return;
+  const n = new THREE.Vector3(0, 0, 1);       // 盘固定在 +z:永远正对相机居中
+  const bx = new THREE.Vector3(1, 0, 0), by = new THREE.Vector3(0, 1, 0);
+  const ctr = new THREE.Vector3(0, 0, 2.55);
+  const l = 1.25 / Math.sqrt(top.length);     // 螺旋总半径恒定,密度随台数
+  const ga = Math.PI * (3 - Math.sqrt(5));
+  const pos = new Float32Array(top.length * 3), col = new Float32Array(top.length * 3);
+  top.forEach((t, i) => {
+    const r = l * Math.sqrt(i + .6), a = i * ga;      // 黄金角唱纹,r 随序号开方
+    pos.set([ctr.x + Math.cos(a) * r,
+             ctr.y + Math.sin(a) * r,
+             ctr.z], i * 3);
+    const c3 = new THREE.Color(genreColor(genreIdx(t.s.tags)));
+    col.set([c3.r, c3.g, c3.b], i * 3);
+  });
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.add(new THREE.Points(geo, new THREE.PointsMaterial({
-    size:0.05, sizeAttenuation:true, map:dotTex, vertexColors:true,
-    transparent:true, opacity:0.9, depthWrite:false })));
-  g.position.z = -3;
-  scene.add(g);
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    size:0.055, sizeAttenuation:true, map:dotTex, vertexColors:true,
+    transparent:true, opacity:0.95, depthWrite:false }));
+  const g = new THREE.Group(); g.add(pts); scene.add(g);
   globe.visible = nebula.visible = pulse.visible = false;
-  dive = { group: g, mode };
+  camDist = 6.2;                              // fov45 下盘半径 1.25 全入画
+  dive = { group: g, pts, list: top, n };
 }
-let diveMode = 0;
 function exitDive() {
   if (!dive) return;
   scene.remove(dive.group);
   dive = null;
-  setView(view);                              // 恢复原视图
+  setView(view);                              // 恢复原视图(距离/可见性一并还原)
+}
+function diveStep(dir) {                      // 唱片内沿唱纹换台(上下箭头)
+  if (!dive || !current) return;
+  const i = dive.list.indexOf(current);
+  const t = dive.list[(i + dir + dive.list.length) % dive.list.length];
+  playStation(t);
 }
 
 /* ============ 交互:拖拽/缩放/点击 ============ */
@@ -947,13 +950,17 @@ function frontCheck(t) {                      // 复用向量,别在热路径 cl
   return view ? true : _fc.copy(t.gpos).applyQuaternion(globe.quaternion).z > 0.1;
 }
 function pick(e) {
-  if (dive) { exitDive(); return; }
   const m = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(m, camera);
+  if (dive) {                                  // 唱片上:点台换曲;点空处退出
+    const h = raycaster.intersectObject(dive.pts)[0];
+    if (h) { playStation(dive.list[h.index]); return; }
+    exitDive(); return;
+  }
   const pts = view ? nDots : gDots;
   for (const h of raycaster.intersectObject(pts)) {
     const t = stations[h.index];
-    if (t && frontCheck(t)) { playStation(t); return; }
+    if (t && frontCheck(t)) { playStation(t); enterDive(t); return; }   // 点击进唱片
   }
 }
 function hoverAt(e) {
@@ -963,11 +970,10 @@ function hoverAt(e) {
   canvas.style.cursor = raycaster.intersectObject(view ? nDots : gDots).length ? 'pointer' : 'grab';
 }
 
-/* ============ 闲置:30s 唱片视图 ============ */
+/* ============ 闲置计时(唱片内点击换台,退出走 ESC/点空白/切视图) ============ */
 let lastAct = performance.now();
 function wake() {
   lastAct = performance.now();
-  if (dive) exitDive();
 }
 
 /* ============ 渲染循环 ============ */
@@ -975,10 +981,10 @@ let raf = 0, lastT = performance.now(), idleAt = performance.now();
 function frame(t) {
   raf = requestAnimationFrame(frame);
   const dt = Math.min((t - lastT) / 1000, 0.1); lastT = t;
-  if (t - lastAct > 30000 && !dive && stations.length) enterDive();
-  if (dive) {
-    dive.group.rotation.y += dt * 0.15;
-    if (dive.mode === 1) dive.group.position.y = Math.sin(t / 4000) * 0.15;
+  if (t - lastAct > 30000 && !dive && current) enterDive(current);
+  if (dive) {                                  // 唱片绕盘心法线缓转(roamdial 同款)
+    _q.setFromAxisAngle(dive.n, dt * 0.15);
+    dive.group.quaternion.premultiply(_q);
   } else if (flyQ) {
     globe.quaternion.slerp(flyQ, 1 - Math.pow(0.002, dt));
     if (globe.quaternion.angleTo(flyQ) < 0.01) { flyQ = null; idleAt = t; }
@@ -1088,8 +1094,10 @@ addEventListener('keydown', e => {
   else if (k === 'n') { wake(); next(); }
   else if (k === 'f') { wake(); toggleLike(); }
   else if (k === 'v') { wake(); setView(view ? 0 : 1); }
-  else if (k === 'd') { wake(); dive ? exitDive() : enterDive(); }
-  else if (e.key === 'Escape') { closeSearch(); $('panel').classList.remove('open'); }
+  else if (k === 'd') { wake(); dive ? exitDive() : enterDive(current); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); diveStep(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); diveStep(-1); }
+  else if (e.key === 'Escape') { closeSearch(); $('panel').classList.remove('open'); if (dive) exitDive(); }
 });
 addEventListener('pointerdown', () => { fxStatic(); player.play().catch(() => {}); }, { once:true });
 
@@ -1109,7 +1117,7 @@ loadLanguages().catch(() => {});
          || null;
   if (t) playStation(t); else next();
 })();
-window.__dbg = { get stations() { return stations.length; }, setView, enterDive, next, loadStations, loadRoamdial };
+window.__dbg = { get stations() { return stations.length; }, get dive() { return !!dive; }, setView, enterDive, next, loadStations, loadRoamdial };
 </script>
 </body>
 </html>
