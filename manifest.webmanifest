@@ -6,5 +6,5 @@
   "background_color": "#04060d",
   "theme_color": "#04060d",
   "description": "随机收听世界电台",
-  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }
