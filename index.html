@@ -94,6 +94,12 @@
   #credit a { color:#3d5573; font-size:.68rem; text-decoration:none }
   #credit a:hover { color:#57708c }
 
+  /* 星云流派标签(SVG overlay,随簇心投影移动) */
+  #nebLabels { position:fixed; inset:0; width:100%; height:100%; z-index:1; pointer-events:none }
+  #nebLabels text.big { font-size:.95rem; font-weight:600; letter-spacing:.06em;
+                        text-shadow:0 0 6px #000c }
+  #nebLabels text.s { font-size:.7rem; fill:#8ba0b8; text-shadow:0 0 6px #000c }
+
   /* 手机 */
   @media (max-width:600px) {
     #brand { font-size:.8rem }
@@ -121,6 +127,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<svg id="nebLabels"></svg>
 
 <div id="top">
   <span id="brand">星海电台</span>
@@ -327,7 +334,27 @@ const pulse = new THREE.Points(
 globe.add(pulse);
 
 const _c = new THREE.Color();
+let nebCtrs = [], nebCnt = [];                  // 簇心/台数(fillDots 更新,标签层共用)
 function fillDots() {
+  /* 流派计数 → 簇心(台数占比定簇半径,仿 roamdial) */
+  nebCnt = new Array(GENRES.length + 1).fill(0);
+  stations.forEach(t => nebCnt[genreIdx(t.s.tags) + 1]++);
+  const a = nebCnt.length, mx = Math.max(...nebCnt, 1);
+  nebCtrs = nebCnt.map((n, e) => {
+    const t = e / a * Math.PI * 2 + 0.3, R = 3 + (e % 2) * 0.9;   // 双环交错
+    return { x: Math.cos(t) * R, y: Math.sin(e * 1.9) * 0.7, z: Math.sin(t) * R,
+             r: 0.35 + 0.95 * Math.sqrt(n / mx) };
+  });
+  glowMesh.geometry.attributes.position.array.set(
+    nebCtrs.flatMap(c => [c.x, c.y, c.z]));
+  glowMesh.geometry.attributes.position.needsUpdate = true;
+  const gc = glowMesh.geometry.attributes.color.array;
+  nebCtrs.forEach((c, e) => {
+    _c.setHex(genreColor(e - 1)).multiplyScalar(0.5);
+    gc.set([_c.r, _c.g, _c.b], e * 3);
+  });
+  glowMesh.geometry.attributes.color.needsUpdate = true;
+  stations.forEach((t, i) => { t.npos = nebulaPos(genreIdx(t.s.tags), i); });
   for (const [pts, key] of [[gDots, 'gpos'], [nDots, 'npos']]) {
     const pa = pts.geometry.attributes.position.array;
     const ca = pts.geometry.attributes.color.array;
@@ -343,33 +370,28 @@ function fillDots() {
   }
 }
 
-/* 星云位置:11 个簇心斐波那契球分布,簇内高斯散布 */
-function nebulaPos(i) {
-  const N = 11, k = i < 0 ? N - 1 : i;         // 未分类放第 11 簇
-  const ga = k * Math.PI * (3 - Math.sqrt(5));
-  const y = 1 - 2 * (k + 0.5) / N;
-  const ctr = new THREE.Vector3(Math.cos(ga) * Math.sqrt(1 - y * y), y, Math.sin(ga) * Math.sqrt(1 - y * y))
-    .multiplyScalar(3.2);
-  const a = Math.random() * Math.PI * 2, r = Math.abs((Math.random() + Math.random() + Math.random()) / 3) * 0.85;
-  return ctr.add(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * r, Math.sin(a) * r));
+/* 星云位置(roamdial 同款):簇内黄金角螺旋盘面,y 压扁 ×0.45,高斯抖动 ±0.3r */
+function nebulaPos(gi, seed) {
+  const c = nebCtrs[gi < 0 ? nebCtrs.length - 1 : gi] || { x:0, y:0, z:0, r:.8 };
+  const k = (seed + 1) * 12.9898;               // 确定性伪随机,重转不跳变
+  const rnd = f => { const x = Math.sin(k + f * 78.233) * 43758.5453; return x - Math.floor(x); };
+  const g = () => (rnd(Math.floor(rnd(9) * 1e3) % 7 + 1) + rnd(3) - 1);   // 近高斯
+  const o = rnd(1) * 2 - 1, l = Math.sqrt(Math.max(0, 1 - o * o));
+  const u = seed * Math.PI * (3 - Math.sqrt(5)) * 3.1;
+  const d = c.r * 0.62;
+  return new THREE.Vector3(
+    c.x + Math.cos(u) * l * d + g() * c.r * 0.3,
+    c.y + o * d * 0.45 + g() * c.r * 0.16,
+    c.z + Math.sin(u) * l * d + g() * c.r * 0.3);
 }
-{ /* 星云簇心微光 */
-  const geo = new THREE.BufferGeometry();
-  const pos = new Float32Array(11 * 3), col = new Float32Array(11 * 3);
-  for (let k = 0; k < 11; k++) {
-    const ga = k * Math.PI * (3 - Math.sqrt(5));
-    const y = 1 - 2 * (k + 0.5) / 11;
-    const v = new THREE.Vector3(Math.cos(ga) * Math.sqrt(1 - y * y), y, Math.sin(ga) * Math.sqrt(1 - y * y)).multiplyScalar(3.2);
-    pos.set([v.x, v.y, v.z], k * 3);
-    const c = new THREE.Color(genreColor(k - 1)).multiplyScalar(0.5);
-    col.set([c.r, c.g, c.b], k * 3);
-  }
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  nebula.add(new THREE.Points(geo, new THREE.PointsMaterial({
-    size:1.1, sizeAttenuation:true, map:dotTex, vertexColors:true,
-    transparent:true, opacity:0.16, blending:THREE.AdditiveBlending, depthWrite:false })));
-}
+const glowMesh = new THREE.Points(
+  (() => { const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((GENRES.length + 1) * 3), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array((GENRES.length + 1) * 3), 3));
+    return g; })(),
+  new THREE.PointsMaterial({ size:1.1, sizeAttenuation:true, map:dotTex, vertexColors:true,
+    transparent:true, opacity:0.16, blending:THREE.AdditiveBlending, depthWrite:false }));
+nebula.add(glowMesh);
 
 /* ============ 中国省份归位 + 国家散布 ============ */
 const CN_GEO = [
@@ -602,7 +624,7 @@ async function refreshFromAPI(q, c) {
 }
 function mkT(s, forced) {
   const [lat, lon] = forced || [+s.geo_lat, +s.geo_long];
-  return { s, gpos: ll2v(lat, lon, 2.005), npos: nebulaPos(genreIdx(s.tags)),
+  return { s, gpos: ll2v(lat, lon, 2.005), npos: new THREE.Vector3(),   // npos 由 fillDots 统一算(需簇心计数)
            approx: !!forced || s.rdPrec >= 3 };  // forced/快照 prec≥3 = 散布坐标,时区标"约"
 }
 async function stationByUUID(uuid) {
@@ -792,7 +814,8 @@ function setView(v) {
   globe.visible = !v; nebula.visible = !!v;
   pulse.visible = !v;
   $('viewBtn').textContent = v ? '🌌 星云' : '🌐 地球';
-  if (!v && current)                          // 回地球视图:飞回当前台
+  if (v) camDist = Math.max(camDist, 8.5);      // 簇环半径 3.9+抖动,拉远才全入画
+  else if (current)                          // 回地球视图:飞回当前台
     flyQ = new THREE.Quaternion().setFromUnitVectors(
       current.gpos.clone().normalize(), new THREE.Vector3(0, 0, 1));
 }
@@ -957,7 +980,48 @@ function frame(t) {
   pulse.material.size = 0.13 + 0.05 * Math.sin(t / 180);
   camera.position.z = camDist;
   renderer.render(scene, camera);
+  drawLabels(t);
 }
+
+/* ============ 标签层:星云流派名 / 地球中心追踪(20fps 足够,省 innerHTML 开销) */
+const nebSvg = $('nebLabels');
+const _pv = new THREE.Vector3();
+let lblAcc = 0;
+function drawLabels(t) {
+  lblAcc += 1;
+  if (lblAcc < 3) return;                       // 每 3 帧一刷(≈20fps)
+  lblAcc = 0;
+  let html = '';
+  if (dive || !stations.length) { nebSvg.innerHTML = html; return; }
+  if (view) {                                   // 星云:簇心上方投影流派名 + 台数
+    nebula.updateMatrixWorld();
+    nebCtrs.forEach((c, e) => {
+      if (!nebCnt[e]) return;
+      _pv.set(c.x, c.y + c.r * 0.9 + 0.15, c.z).applyMatrix4(nebula.matrixWorld).project(camera);
+      if (_pv.z > 1) return;                    // 背面/出屏剔除
+      const x = (_pv.x * .5 + .5) * innerWidth, y = (-_pv.y * .5 + .5) * innerHeight;
+      const col = '#' + _c.setHex(genreColor(e - 1)).getHexString();
+      const nm = e - 1 < 0 ? '综合' : GENRES[e - 1].zh;
+      html += `<text class="big" x="${x.toFixed(0)}" y="${y.toFixed(0)}" text-anchor="middle" fill="${col}">${nm}</text>` +
+              `<text class="s" x="${x.toFixed(0)}" y="${(y + 15).toFixed(0)}" text-anchor="middle">${nebCnt[e]} 台</text>`;
+    });
+  } else {                                      // 地球:准星中心附近最近的正面台
+    let hit = null, best = 1.961;               // cos12°×r(2.005),视角内即认"中心压中"
+    for (const t of stations) {
+      const z = _fc.copy(t.gpos).applyQuaternion(globe.quaternion).z;   // 世界 z(相机在 +z)
+      if (z > best) { best = z; hit = t; }      // gpos 归一化后 z 即 cos(与+z夹角)
+    }
+    if (hit) {
+      const cx = innerWidth / 2, cy = innerHeight / 2;
+      html += `<circle cx="${cx}" cy="${cy}" r="10" fill="none" stroke="#8ba0b8" stroke-opacity=".5"/>` +
+              `<line x1="${cx + 13}" y1="${cy - 13}" x2="${cx + 26}" y2="${cy - 26}" stroke="#8ba0b8" stroke-opacity=".5"/>` +
+              `<text class="big" x="${cx + 30}" y="${cy - 28}" fill="#dde7f2">${hit.s.name.slice(0, 30)}</text>` +
+              `<text class="s" x="${cx + 30}" y="${cy - 13}">${hit.s.country || ''} · ${(hit.s.tags || '').split(',')[0] || ''}</text>`;
+    }
+  }
+  nebSvg.innerHTML = html;
+}
+
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
