@@ -483,7 +483,6 @@ function placeLatLon(s, byCC) {               // 无坐标台的安放
 /* ============ 数据池 ============ */
 const fLang = $('fLang'), fCountry = $('fCountry'), fBitrate = $('fBitrate'), fGenre = $('fGenre');
 function apiURL() {
-  const filtered = fLang.value || fCountry.value || fGenre.value;
   const p = new URLSearchParams({ limit: CAP, order:'random', hidebroken:'true' });
   if (+fBitrate.value) p.set('bitrate_min', fBitrate.value);
   if (fLang.value) p.set('language', fLang.value);
@@ -497,8 +496,11 @@ function buildCountryOptions() {
   for (const t of stations) counts[t.s.countrycode] = (counts[t.s.countrycode] || 0) + 1;
   const cur = fCountry.value;
   fCountry.length = 1;
-  for (const [cc, n] of Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 30))
-    fCountry.add(new Option(`${cc === '' ? '未知' : regionName.of(cc)} (${n})`, cc));
+  for (const [cc, n] of Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 30)) {
+    let nm;                                     // 社区数据混非 ISO 码,Intl 会抛 RangeError
+    try { nm = cc === '' ? '未知' : regionName.of(cc); } catch { nm = cc; }
+    fCountry.add(new Option(`${nm} (${n})`, cc));
+  }
   fCountry.value = cur;
 }
 /* Radio Browser 语言名是英文,映射到 BCP-47 后用 Intl.DisplayNames 出中文 */
@@ -738,6 +740,10 @@ function next() {
 let failN = 0;                                 // 连续死链计数,防全网失效时无限换台
 player.onerror = () => {
   if (++failN > 10) { nameEl.textContent = '没有可用流,稍后再试'; metaEl.textContent = ''; failN = 0; return; }
+  if (current) {                               // 拨盘/选台语义:死链先换同国家台,不甩去随机国家
+    const same = stations.filter(t => t !== current && t.s.countrycode === current.s.countrycode);
+    if (same.length) { playStation(same[(Math.random() * same.length) | 0]); return; }
+  }
   next();
 };
 player.addEventListener('play', () => { failN = 0; $('ppBtn').textContent = '⏸'; });
@@ -987,7 +993,7 @@ function frame(t) {
   camera.position.z = camDist;
   renderer.render(scene, camera);
   drawLabels(t);
-  if (dialArm && !drag.on && !flyQ && t > settleAt &&   // 拨盘:转完停稳,播准星台(地球/星云通用)
+  if (dialArm && !onlySaved && !drag.on && !flyQ && t > settleAt &&   // 拨盘:转完停稳,播准星台(地球/星云通用;"只听收藏"时旁路)
       centerHit && centerHit !== current) { dialArm = false; playStation(centerHit); }
 }
 let dialArm = false, settleAt = 0;
@@ -996,7 +1002,7 @@ let dialArm = false, settleAt = 0;
 const nebSvg = $('nebLabels');
 const _pv = new THREE.Vector3();
 let lblAcc = 0, centerHit = null;               // centerHit:准星当前压中的台,转动停稳后自动播它
-const esc = s => String(s).replace(/[&<>"]/g, // 台名/国家是社区数据,插值前必须转义("=双引号,字面量会被推送通道吃掉)
+const esc = s => String(s).replace(/[&<>]/g,   // 台名/国家是社区数据,插值前必须转义
   c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 function drawLabels(t) {
   lblAcc += 1;
@@ -1074,7 +1080,8 @@ for (const sel of [fGenre, fLang, fCountry, fBitrate])
     next();
   });
 addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT') { if (e.key === 'Escape') closeSearch(); return; }
+  if (/INPUT|SELECT|BUTTON|TEXTAREA/.test(e.target.tagName))   // 焦点在控件上:空格/字符留给原生行为
+    { if (e.key === 'Escape') closeSearch(); return; }
   const k = e.key.toLowerCase();
   if (k === '/') { e.preventDefault(); openSearch(); }
   else if (k === ' ') { e.preventDefault(); wake(); $('ppBtn').onclick(); }
